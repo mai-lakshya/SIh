@@ -1,0 +1,115 @@
+from fastapi import FastAPI, HTTPException, Security, Request
+from fastapi.security.api_key import APIKeyHeader
+from pydantic import BaseModel
+import pandas as pd
+import logging
+import json
+from typing import Optional, List, Dict, Any
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+from risk_analysis_system import RiskAnalysisSystem
+from monitor import ModelMonitor
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+
+# --- Phase 9: Security & Rate Limiting ---
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI(title="Land Acquisition Risk API", version="2.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+API_KEY = "super-secret-token" # In production, read from env
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if api_key_header != API_KEY:
+        raise HTTPException(status_code=403, detail="Could not validate credentials")
+    return api_key_header
+
+class ProjectPayload(BaseModel):
+    project_id: Optional[str] = 'NHAI-UNKNOWN'
+    state: str
+    land_area_hectares: float
+    project_type: str
+    terrain_type: str
+    estimated_cost_inr_crore: float
+    affected_families_count: Optional[int] = 500
+    title_dispute_rate_percent: Optional[float] = 5.0
+    local_protest_flag: Optional[bool] = False
+    compensation_multiplier_demand: Optional[float] = 1.5
+    sia_approval_status: Optional[str] = 'Pending'
+    section_11_notification_days: Optional[int] = 30
+    forest_clearance_status: Optional[str] = 'Not_Required'
+    fund_disbursement_percent: Optional[float] = 10.0
+    project_age_years: Optional[int] = 1
+
+# Global variables
+system: RiskAnalysisSystem = None
+monitor: ModelMonitor = None
+
+@app.on_event("startup")
+def load_artifacts():
+    global system, monitor
+    try:
+        system = RiskAnalysisSystem(
+            pipeline_path='pipeline.joblib',
+            ensemble_path='ensemble.joblib',
+            timeline_path='timeline.joblib'
+        )
+        monitor = ModelMonitor()
+        logging.info("RiskAnalysisSystem and Monitor successfully loaded.")
+    except Exception as e:
+        logging.error(f"Failed to load artifacts: {e}")
+
+@app.post("/predict")
+@limiter.limit("10/minute")
+async def predict_risk(request: Request, payload: ProjectPayload, api_key: str = Security(get_api_key)):
+    if not system:
+        raise HTTPException(status_code=500, detail="Models not loaded")
+
+    raw_payload = pd.DataFrame([payload.dict(exclude_unset=True)])
+    
+    # Fill defaults for Phase 6 Pipeline
+    for col in ['C_r', 'F_r', 'H_r', 'W_r', 'P_r']:
+        if col not in raw_payload:
+            raw_payload[col] = 0.5
+            
+    try:
+        result = system.predict(raw_payload)
+        
+        # Map to Frontend Schema
+        frontend_response = {
+            "project_id": payload.project_id,
+            "predictions": {
+                "delay_probability": round(result['predictions']['delay_probability'] * 100, 1),
+                "calibrated_risk_tier": result['predictions']['calibrated_risk_tier'],
+                "predicted_delay_days": int(result['predictions']['predicted_delay_days']),
+                "median_survival_days": int(result['timeline']['median_survival_days'])
+            },
+            "explainability": {
+                "top_risk_drivers": result['explanation']['risk_drivers'],
+                "category_breakdown": result['explanation']['category_breakdown']
+            }
+        }
+        return frontend_response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
+
+@app.get("/metrics")
+@limiter.limit("30/minute")
+async def get_metrics(request: Request, api_key: str = Security(get_api_key)):
+    """Phase 7: Monitoring Endpoint"""
+    if not monitor:
+        raise HTTPException(status_code=500, detail="Monitor not initialized")
+    
+    return {
+        "latest_performance": monitor.get_latest_performance(),
+        "recent_alerts": monitor.get_alert_summary(limit=10)
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

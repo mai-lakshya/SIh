@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: risk_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: monitoring
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile.api
+    image: risk-prediction-api:latest
+    container_name: risk_api
+    ports:
+      - "8000:8000"
+    environment:
+      - WORKERS=4
+      - DB_HOST=db
+      - DB_USER=root
+      - DB_PASSWORD=rootpassword
+      - DB_NAME=monitoring
+    volumes:
+      - ./mlflow.db:/app/mlflow.db
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    image: risk-prediction-dashboard:latest
+    container_name: risk_dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - DB_HOST=db
+      - DB_USER=root
+      - DB_PASSWORD=rootpassword
+      - DB_NAME=monitoring
+    depends_on:
+      - api
+      - db
+    restart: unless-stopped
+
+  monitor_daemon:
+    build: 
+      context: .
+      dockerfile: Dockerfile.api
+    image: risk-monitor-daemon:latest
+    container_name: risk_monitor
+    command: python monitor_daemon.py
+    environment:
+      - DB_HOST=db
+      - DB_USER=root
+      - DB_PASSWORD=rootpassword
+      - DB_NAME=monitoring
+    depends_on:
+      - api
+      - db
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
