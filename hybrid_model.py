@@ -96,12 +96,16 @@ class HybridRiskPredictor:
         self.regressor_crs = None
         self.regressor_days = None
 
-    def _build_classifiers(self):
+    def _build_classifiers(self, cv=3):
         # Extract params for each model
         lgb_params = self.model_params.get('lgb', {})
         xgb_params = self.model_params.get('xgb', {})
         cat_params = self.model_params.get('cat', {})
         et_params = self.model_params.get('et', {})
+        
+        lgb_params = {'verbose': -1, **lgb_params}
+        xgb_params = {'verbosity': 0, **xgb_params}
+        cat_params = {'verbose': False, **cat_params}
         
         lgb_clf = TreeWrapperClassifier(lgb.LGBMClassifier, random_state=self.random_state, **lgb_params)
         xgb_clf = TreeWrapperClassifier(xgb.XGBClassifier, random_state=self.random_state, **xgb_params)
@@ -117,22 +121,26 @@ class HybridRiskPredictor:
         
         meta_classifier = Pipeline([
             ('logit', FunctionTransformer(safe_logit)),
-            ('lr', LogisticRegressionCV(class_weight='balanced', max_iter=2000, cv=3, random_state=self.random_state))
+            ('lr', LogisticRegressionCV(class_weight='balanced', max_iter=2000, cv=cv, random_state=self.random_state))
         ])
         
         return StackingClassifier(
             estimators=base_classifiers,
             final_estimator=meta_classifier,
-            cv=3,
+            cv=cv,
             n_jobs=1,
             passthrough=False
         )
 
-    def _build_regressors(self):
+    def _build_regressors(self, cv=3):
         lgb_params = self.model_params.get('lgb', {})
         xgb_params = self.model_params.get('xgb', {})
         cat_params = self.model_params.get('cat', {})
         et_params = self.model_params.get('et', {})
+        
+        lgb_params = {'verbose': -1, **lgb_params}
+        xgb_params = {'verbosity': 0, **xgb_params}
+        cat_params = {'verbose': False, **cat_params}
         
         lgb_reg = TreeWrapperRegressor(lgb.LGBMRegressor, random_state=self.random_state, **lgb_params)
         xgb_reg = TreeWrapperRegressor(xgb.XGBRegressor, random_state=self.random_state, **xgb_params)
@@ -147,33 +155,39 @@ class HybridRiskPredictor:
         ]
         
         alphas = np.logspace(-3, 4, 30)
-        meta_regressor = RidgeCV(alphas=alphas, cv=3)
+        meta_regressor = RidgeCV(alphas=alphas, cv=cv)
         
         return StackingRegressor(
             estimators=base_regressors,
             final_estimator=meta_regressor,
-            cv=3,
+            cv=cv,
             n_jobs=1,
             passthrough=False
         )
 
     def fit(self, X, y_cls, y_crs, y_days):
-        X_train, X_calib, y_cls_train, y_cls_calib = train_test_split(
-            X, y_cls, test_size=0.1, random_state=self.random_state, stratify=y_cls
-        )
-        
-        self.classifier = self._build_classifiers()
+        y_cls_arr = np.asarray(y_cls, dtype=int)
+        counts = np.bincount(y_cls_arr)
+        min_class_count = min(counts) if len(counts) > 1 else 1
+
+        # Adaptive CV splits based on minimum class count
+        cv_splits = min(3, max(2, min_class_count // 3)) if min_class_count >= 4 else 2
+
+        self.classifier = self._build_classifiers(cv=cv_splits)
         self.calibrated_classifier = CalibratedClassifierCV(
             estimator=self.classifier,
-            method='isotonic',
-            cv=2
+            method='isotonic' if min_class_count >= 15 else 'sigmoid',
+            cv=cv_splits
         )
-        self.calibrated_classifier.fit(X_calib, y_cls_calib)
+        self.calibrated_classifier.fit(X, y_cls)
         
-        self.regressor_crs = self._build_regressors()
+        if hasattr(self.calibrated_classifier, 'calibrated_classifiers_') and len(self.calibrated_classifier.calibrated_classifiers_) > 0:
+            self.classifier = self.calibrated_classifier.calibrated_classifiers_[0].estimator
+
+        self.regressor_crs = self._build_regressors(cv=cv_splits)
         self.regressor_crs.fit(X, y_crs)
         
-        self.regressor_days = self._build_regressors()
+        self.regressor_days = self._build_regressors(cv=cv_splits)
         self.regressor_days.fit(X, y_days)
         
         return self
@@ -188,11 +202,17 @@ class HybridRiskPredictor:
             pred_crs = pred_crs * (0.5 + delay_prob)
             pred_days = np.maximum(0, pred_days)
             pred_crs = np.clip(pred_crs, 0, 100)
+
+        risk_tiers = np.where(pred_crs > 75, "Critical",
+                     np.where(pred_crs > 50, "High",
+                     np.where(pred_crs > 25, "Medium", "Low")))
             
         return {
             'delay_probability': delay_prob,
             'crs': pred_crs,
-            'delay_days': pred_days
+            'delay_days': pred_days,
+            'predicted_delay_days': pred_days,
+            'risk_tier': risk_tiers
         }
 
     def save(self, filepath):

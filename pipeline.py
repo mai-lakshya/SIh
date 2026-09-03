@@ -31,13 +31,18 @@ class DynamicFeatureTracker(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
-        # Ensure column order consistency
+        # Ensure column order consistency and fill missing expected features
         if hasattr(self, 'feature_names_in_'):
-            # Some features might be added by FeatureEngineer
-            cols = [c for c in self.feature_names_in_ if c in X.columns]
-            # Add any new columns that are in X but not in feature_names_in_
-            new_cols = [c for c in X.columns if c not in cols]
-            return X[cols + new_cols]
+            X_out = X.copy()
+            for c in self.feature_names_in_:
+                if c not in X_out.columns:
+                    X_out[c] = "Unknown" if c in getattr(self, 'cat_cols_', []) else 0.0
+                else:
+                    if c in getattr(self, 'cat_cols_', []):
+                        X_out[c] = X_out[c].fillna("Unknown")
+                    else:
+                        X_out[c] = pd.to_numeric(X_out[c], errors='coerce').fillna(0.0)
+            return X_out[self.feature_names_in_]
         return X
 
 class FeatureEngineer(BaseEstimator, TransformerMixin):
@@ -52,17 +57,36 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         
         # 1. Ratios (Density)
         if 'estimated_cost_inr_crore' in X_out.columns and 'land_area_hectares' in X_out.columns:
-            X_out['financial_density'] = X_out['estimated_cost_inr_crore'] / np.maximum(X_out['land_area_hectares'], 1e-5)
+            cost = pd.to_numeric(X_out['estimated_cost_inr_crore'], errors='coerce').fillna(0.0)
+            area = pd.to_numeric(X_out['land_area_hectares'], errors='coerce').fillna(0.0)
+            X_out['financial_density'] = cost / np.maximum(area, 1e-5)
             
         if 'affected_families_count' in X_out.columns and 'land_area_hectares' in X_out.columns:
-            X_out['population_density'] = X_out['affected_families_count'] / np.maximum(X_out['land_area_hectares'], 1e-5)
+            aff = pd.to_numeric(X_out['affected_families_count'], errors='coerce').fillna(0.0)
+            area = pd.to_numeric(X_out['land_area_hectares'], errors='coerce').fillna(0.0)
+            X_out['population_density'] = aff / np.maximum(area, 1e-5)
             
         # 2. Velocity (Fallback: Financial Burn Rate to date since planned_duration is missing)
-        # We don't have planned_project_duration_years, initial_proposal_date, or planned_completion_date
-        # Therefore, we use the actual project_age_years.
         if 'estimated_cost_inr_crore' in X_out.columns and 'project_age_years' in X_out.columns:
-            X_out['financial_burn_rate_to_date'] = X_out['estimated_cost_inr_crore'] / np.maximum(X_out['project_age_years'], 1)
+            cost = pd.to_numeric(X_out['estimated_cost_inr_crore'], errors='coerce').fillna(0.0)
+            age = pd.to_numeric(X_out['project_age_years'], errors='coerce').fillna(1.0)
+            X_out['financial_burn_rate_to_date'] = cost / np.maximum(age, 1)
             
+        # Temporal calculation: project_age_years from project_start_year if not present
+        if 'project_start_year' in X_out.columns:
+            start_year = pd.to_numeric(X_out['project_start_year'], errors='coerce')
+            computed_age = np.maximum(0, 2026 - start_year)
+            if 'project_age_years' not in X_out.columns:
+                X_out['project_age_years'] = computed_age
+            else:
+                X_out['project_age_years'] = X_out['project_age_years'].fillna(computed_age)
+
+        # Outlier clipping / sanity clamping
+        if 'estimated_cost_inr_crore' in X_out.columns:
+            X_out['estimated_cost_inr_crore'] = pd.to_numeric(X_out['estimated_cost_inr_crore'], errors='coerce').clip(upper=1e8).fillna(0.0)
+        if 'title_dispute_rate_percent' in X_out.columns:
+            X_out['title_dispute_rate_percent'] = pd.to_numeric(X_out['title_dispute_rate_percent'], errors='coerce').clip(lower=0.0, upper=100.0).fillna(0.0)
+
         # 3. Interactions
         if 'state' in X_out.columns and 'project_type' in X_out.columns:
             X_out['state_project_type'] = X_out['state'].astype(str) + "_" + X_out['project_type'].astype(str)
@@ -154,6 +178,13 @@ class OOFTargetEncoder(BaseEstimator, TransformerMixin):
             if col in X_out.columns:
                 # Use global mapping learned during fit
                 X_out[col] = X_out[col].map(self.mapping_.get(col, {})).fillna(self.global_mean_).astype(float)
+        # Ensure all columns are numeric floats and no residual NaNs or strings
+        for col in X_out.columns:
+            if not pd.api.types.is_numeric_dtype(X_out[col]):
+                mapped = X_out[col].map({'True': 1.0, 'False': 0.0, 'true': 1.0, 'false': 0.0, True: 1.0, False: 0.0})
+                X_out[col] = pd.to_numeric(mapped, errors='coerce').fillna(0.0)
+            else:
+                X_out[col] = pd.to_numeric(X_out[col], errors='coerce').fillna(0.0).astype(float)
         return X_out
 
 class SMOTENCDynamicWrapper(BaseEstimator):
@@ -171,16 +202,21 @@ class SMOTENCDynamicWrapper(BaseEstimator):
             cat_cols = X.select_dtypes(include=['object', 'category', 'bool']).columns
             cat_indices = [X.columns.get_loc(c) for c in cat_cols]
             
-        if len(cat_indices) > 0:
-            self.sampler_ = SMOTENC(categorical_features=cat_indices, random_state=self.random_state)
-        else:
-            from imblearn.over_sampling import SMOTE
-            self.sampler_ = SMOTE(random_state=self.random_state)
-            
         # Avoid unnecessary warnings or errors if data is not imbalanced
         classes, counts = np.unique(y, return_counts=True)
         if len(classes) <= 1 or min(counts) == max(counts):
             return X, y
+            
+        min_samples = min(counts)
+        k_neighbors = min(5, min_samples - 1)
+        if k_neighbors < 1:
+            return X, y
+
+        if len(cat_indices) > 0:
+            self.sampler_ = SMOTENC(categorical_features=cat_indices, k_neighbors=k_neighbors, random_state=self.random_state)
+        else:
+            from imblearn.over_sampling import SMOTE
+            self.sampler_ = SMOTE(k_neighbors=k_neighbors, random_state=self.random_state)
             
         X_res, y_res = self.sampler_.fit_resample(X, y)
         return X_res, y_res
@@ -188,6 +224,9 @@ class SMOTENCDynamicWrapper(BaseEstimator):
     def fit(self, X, y=None):
         self.fit_resample(X, y)
         return self
+
+    def transform(self, X):
+        return X
 
 def get_preprocessing_pipeline(cat_cols=None, log_cols=None, te_cols=None, use_smote=True):
     """

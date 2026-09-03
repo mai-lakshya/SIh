@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Infrastructure Land Acquisition Risk Predictor</title>
+  <meta name="description" content="AI-Powered Infrastructure Land Acquisition Delay & Risk Prediction System using Stacking Ensembles and Survival Analysis.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --bg-card: rgba(22, 29, 47, 0.75);
+      --bg-card-hover: rgba(30, 40, 65, 0.85);
+      --border-color: rgba(99, 130, 180, 0.2);
+      --border-glow: rgba(0, 240, 255, 0.35);
+      --text-main: #f0f4fc;
+      --text-muted: #94a3b8;
+      --accent-cyan: #00f0ff;
+      --accent-purple: #8b5cf6;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(0, 240, 255, 0.12) 0px, transparent 50%),
+        radial-gradient(at 50% 50%, rgba(15, 23, 42, 0.8) 0px, transparent 100%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      min-height: 100vh;
+      padding: 24px;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1300px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 28px;
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-glass);
+      margin-bottom: 28px;
+    }
+
+    .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.6rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #ffffff 0%, var(--accent-cyan) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-subtitle {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .badge-pulse {
+      width: 8px;
+      height: 8px;
+      background-color: #34d399;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #34d399;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+    }
+
+    .grid-layout {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 28px;
+    }
+
+    @media (max-width: 1024px) {
+      .grid-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      box-shadow: var(--shadow-glass);
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .card:hover {
+      border-color: var(--border-glow);
+    }
+
+    .card-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #ffffff;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .presets-bar {
+      margin-bottom: 20px;
+    }
+
+    .presets-label {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .presets-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .btn-preset {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #cbd5e1;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-preset:hover {
+      background: rgba(0, 240, 255, 0.15);
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #94a3b8;
+      margin-bottom: 5px;
+    }
+
+    input, select {
+      width: 100%;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(99, 130, 180, 0.25);
+      color: #f8fafc;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.2);
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+    }
+
+    .checkbox-group input {
+      width: auto;
+      accent-color: var(--accent-cyan);
+      cursor: pointer;
+    }
+
+    .btn-submit {
+      width: 100%;
+      background: linear-gradient(135deg, #00f0ff 0%, #3b82f6 50%, #8b5cf6 100%);
+      color: #050b14;
+      font-family: 'Outfit', sans-serif;
+      font-weight: 700;
+      font-size: 1rem;
+      padding: 14px 20px;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      margin-top: 18px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 20px rgba(0, 240, 255, 0.3);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-submit:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(0, 240, 255, 0.5);
+    }
+
+    .btn-submit:active {
+      transform: translateY(0);
+    }
+
+    /* KPI Highlights */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 800px) {
+      .kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .kpi-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+    }
+
+    .kpi-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .kpi-value {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.9rem;
+      font-weight: 700;
+      color: #ffffff;
+      line-height: 1.1;
+    }
+
+    .kpi-sub {
+      font-size: 0.8rem;
+      color: #94a3b8;
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tier-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .tier-Low { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #059669; }
+    .tier-Medium { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #d97706; }
+    .tier-High { background: rgba(244, 63, 94, 0.2); color: #f87171; border: 1px solid #dc2626; }
+    .tier-Critical { background: rgba(225, 29, 72, 0.3); color: #fda4af; border: 1px solid #e11d48; }
+
+    /* Explainability and Categories */
+    .insights-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 900px) {
+      .insights-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .bar-item {
+      margin-bottom: 12px;
+    }
+
+    .bar-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      margin-bottom: 4px;
+    }
+
+    .bar-track {
+      background: rgba(255, 255, 255, 0.08);
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+      transition: width 0.6s ease;
+    }
+
+    .category-pill {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+    }
+
+    .category-val {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 700;
+      color: var(--accent-cyan);
+    }
+
+    /* Recommendations */
+    .rec-item {
+      background: rgba(15, 23, 42, 0.6);
+      border-left: 4px solid var(--accent-cyan);
+      border-radius: var(--radius-sm);
+      padding: 14px 18px;
+      margin-bottom: 12px;
+    }
+
+    .rec-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: #ffffff;
+      margin-bottom: 4px;
+    }
+
+    .rec-desc {
+      font-size: 0.82rem;
+      color: #94a3b8;
+    }
+
+    .rec-meta {
+      display: flex;
+      gap: 16px;
+      font-size: 0.75rem;
+      color: #cbd5e1;
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .spinner {
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-top: 3px solid #000;
+      border-radius: 50%;
+      width: 18px;
+      height: 18px;
+      animation: spin 0.8s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <div class="brand-title">
+          <span>⚡</span> SIH Infrastructure Risk Predictor
+        </div>
+        <div class="brand-subtitle">
+          Next-Gen AI Land Acquisition Risk Engine & Survival Timeline Estimator
+        </div>
+      </div>
+      <div class="badge-status">
+        <span class="badge-pulse"></span> Stacking AI Engine Online
+      </div>
+    </header>
+
+    <div class="grid-layout">
+      <!-- Input Form Card -->
+      <div class="card">
+        <div class="card-title">
+          <span>Project Parameters</span>
+          <span style="font-size: 0.8rem; color: var(--accent-cyan);">Inputs</span>
+        </div>
+
+        <div class="presets-bar">
+          <span class="presets-label">⚡ Quick Load Presets</span>
+          <div class="presets-buttons">
+            <button class="btn-preset" onclick="loadPreset('highway')">🛣️ Urban Highway</button>
+            <button class="btn-preset" onclick="loadPreset('metro')">🚇 Transit Metro</button>
+            <button class="btn-preset" onclick="loadPreset('eco')">🌲 Eco Railway</button>
+            <button class="btn-preset" onclick="loadPreset('solar')">☀️ Solar Park</button>
+          </div>
+        </div>
+
+        <form id="riskForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="project_id">Project Code</label>
+              <input type="text" id="project_id" value="NHAI-DL-2026-01">
+            </div>
+            <div class="form-group">
+              <label for="project_type">Project Type</label>
+              <select id="project_type">
+                <option value="Highway" selected>Highway</option>
+                <option value="Railway">Railway</option>
+                <option value="Energy">Energy / Power</option>
+                <option value="Urban">Urban Development</option>
+                <option value="Irrigation">Irrigation / Dam</option>
+                <option value="Airport">Airport / Port</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="state">State</label>
+              <select id="state">
+                <option value="Maharashtra" selected>Maharashtra</option>
+                <option value="Telangana">Telangana</option>
+                <option value="Gujarat">Gujarat</option>
+                <option value="Uttar Pradesh">Uttar Pradesh</option>
+                <option value="Bihar">Bihar</option>
+                <option value="Tamil Nadu">Tamil Nadu</option>
+                <option value="Karnataka">Karnataka</option>
+                <option value="Odisha">Odisha</option>
+                <option value="Assam">Assam</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="terrain_type">Terrain Classification</label>
+              <select id="terrain_type">
+                <option value="Plain" selected>Plain</option>
+                <option value="Urban">Urban</option>
+                <option value="Hilly">Hilly / Mountainous</option>
+                <option value="Coastal">Coastal</option>
+                <option value="Forest_Eco_Sensitive">Eco-Sensitive Forest</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="estimated_cost_inr_crore">Estimated Cost (₹ Cr)</label>
+              <input type="number" id="estimated_cost_inr_crore" value="1250" step="10">
+            </div>
+            <div class="form-group">
+              <label for="land_area_hectares">Land Area (Ha)</label>
+              <input type="number" id="land_area_hectares" value="150" step="1">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="affected_families_count">Affected Families</label>
+              <input type="number" id="affected_families_count" value="450" step="10">
+            </div>
+            <div class="form-group">
+              <label for="title_dispute_rate_percent">Title Dispute Rate (%)</label>
+              <input type="number" id="title_dispute_rate_percent" value="12.5" step="0.5">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="sia_approval_status">SIA Status</label>
+              <select id="sia_approval_status">
+                <option value="Approved">Approved</option>
+                <option value="Pending" selected>Pending</option>
+                <option value="Rejected">Rejected</option>
+                <option value="Exempted">Exempted</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="forest_clearance_status">Forest Clearance</label>
+              <select id="forest_clearance_status">
+                <option value="Approved">Approved</option>
+                <option value="Stage_1_Granted">Stage 1 Granted</option>
+                <option value="Pending" selected>Pending</option>
+                <option value="Not_Required">Not Required</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="fund_disbursement_percent">Fund Disbursed (%)</label>
+              <input type="number" id="fund_disbursement_percent" value="25" min="0" max="100">
+            </div>
+            <div class="form-group">
+              <label for="compensation_multiplier_demand">Comp Multiplier (x)</label>
+              <input type="number" id="compensation_multiplier_demand" value="2.0" step="0.1">
+            </div>
+          </div>
+
+          <div class="checkbox-group">
+            <input type="checkbox" id="local_protest_flag">
+            <label for="local_protest_flag" style="margin-bottom:0; color: #cbd5e1; cursor: pointer;">
+              Active Local Protest / Litigation Flag
+            </label>
+          </div>
+
+          <button type="submit" class="btn-submit" id="submitBtn">
+            <span class="spinner" id="btnSpinner"></span>
+            <span id="btnText">Predict Risk & Timeline</span>
+          </button>
+        </form>
+      </div>
+
+      <!-- Results Display Card -->
+      <div>
+        <!-- KPI Row -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-title">Delay Probability</div>
+            <div class="kpi-value" id="kpiProb">37.5%</div>
+            <div class="kpi-sub">
+              <span class="tier-badge tier-Medium" id="kpiTier">MEDIUM</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-title">Composite Risk Score</div>
+            <div class="kpi-value" id="kpiCRS">34.4<span style="font-size:1rem;color:#64748b;">/100</span></div>
+            <div class="kpi-sub" id="kpiCRSDetail">Calibrated Hybrid Score</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-title">Expected Delay</div>
+            <div class="kpi-value" id="kpiDelay">182 <span style="font-size:1rem;color:#64748b;">Days</span></div>
+            <div class="kpi-sub" id="kpiDelayMonths">≈ 6.1 Months Schedule Drift</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-title">Median Survival</div>
+            <div class="kpi-value" id="kpiSurvival">401 <span style="font-size:1rem;color:#64748b;">Days</span></div>
+            <div class="kpi-sub">Phase: <strong style="color:var(--accent-cyan);" id="kpiPhase">Short-term</strong></div>
+          </div>
+        </div>
+
+        <!-- Explainability Section -->
+        <div class="insights-grid">
+          <div class="card">
+            <div class="card-title">
+              <span>Top Risk Drivers (TreeSHAP)</span>
+              <span style="font-size: 0.8rem; color: var(--accent-cyan);">Dual-Attribution</span>
+            </div>
+            <div id="driversContainer">
+              <div class="bar-item">
+                <div class="bar-header">
+                  <span>population_density</span>
+                  <span>Impact: 1.00</span>
+                </div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 100%;"></div>
+                </div>
+              </div>
+              <div class="bar-item">
+                <div class="bar-header">
+                  <span>terrain_type</span>
+                  <span>Impact: 0.22</span>
+                </div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 22%;"></div>
+                </div>
+              </div>
+              <div class="bar-item">
+                <div class="bar-header">
+                  <span>forest_clearance_status</span>
+                  <span>Impact: 0.16</span>
+                </div>
+                <div class="bar-track">
+                  <div class="bar-fill" style="width: 16%;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>Category Risk Breakdown</span>
+              <span style="font-size: 0.8rem; color: var(--accent-purple);">Audit</span>
+            </div>
+            <div id="categoriesContainer">
+              <div class="category-pill">
+                <span>⚖️ Socio-Legal Disputes</span>
+                <span class="category-val" id="catSocio">58.4%</span>
+              </div>
+              <div class="category-pill">
+                <span>🌲 Environmental Clearance</span>
+                <span class="category-val" id="catEnv">16.9%</span>
+              </div>
+              <div class="category-pill">
+                <span>🏛️ Administrative Workflow</span>
+                <span class="category-val" id="catAdmin">16.8%</span>
+              </div>
+              <div class="category-pill">
+                <span>💰 Financial Disbursement</span>
+                <span class="category-val" id="catFin">7.9%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Prescriptive Recommendations -->
+        <div class="card">
+          <div class="card-title">
+            <span>Prescriptive Mitigation Plan & ROI</span>
+            <span style="font-size: 0.8rem; color: var(--accent-emerald);">Action Engine</span>
+          </div>
+          <div id="recommendationsContainer">
+            <div class="rec-item">
+              <div class="rec-title">Establish Fast-Track Special Land Acquisition Cell (SLAC)</div>
+              <div class="rec-desc">Appoint dedicated revenue officers and deploy dispute resolution fast-track courts to resolve title defects.</div>
+              <div class="rec-meta">
+                <span>⏱️ Est. Delay Saved: <strong>45 Days</strong></span>
+                <span>💵 Cost Savings: <strong>₹ 4.5 Cr</strong></span>
+                <span>📈 ROI: <strong>+350%</strong></span>
+              </div>
+            </div>
+            <div class="rec-item">
+              <div class="rec-title">Expedite MoEF&CC Stage-1 Clearance Workflow</div>
+              <div class="rec-desc">Upload compensatory afforestation proposals and initiate online Parivesh portal joint inspections.</div>
+              <div class="rec-meta">
+                <span>⏱️ Est. Delay Saved: <strong>30 Days</strong></span>
+                <span>💵 Cost Savings: <strong>₹ 3.0 Cr</strong></span>
+                <span>📈 ROI: <strong>+280%</strong></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const presets = {
+      highway: {
+        project_id: "NHAI-MH-2026-08",
+        project_type: "Highway",
+        state: "Maharashtra",
+        terrain_type: "Urban",
+        estimated_cost_inr_crore: 1450,
+        land_area_hectares: 180,
+        affected_families_count: 850,
+        title_dispute_rate_percent: 18.5,
+        sia_approval_status: "Pending",
+        forest_clearance_status: "Pending",
+        fund_disbursement_percent: 20,
+        compensation_multiplier_demand: 2.2,
+        local_protest_flag: true
+      },
+      metro: {
+        project_id: "DMRC-URBAN-2026",
+        project_type: "Urban",
+        state: "Telangana",
+        terrain_type: "Urban",
+        estimated_cost_inr_crore: 3200,
+        land_area_hectares: 45,
+        affected_families_count: 1200,
+        title_dispute_rate_percent: 14.0,
+        sia_approval_status: "Approved",
+        forest_clearance_status: "Not_Required",
+        fund_disbursement_percent: 45,
+        compensation_multiplier_demand: 2.0,
+        local_protest_flag: false
+      },
+      eco: {
+        project_id: "IR-ECO-FOREST-04",
+        project_type: "Railway",
+        state: "Assam",
+        terrain_type: "Forest_Eco_Sensitive",
+        estimated_cost_inr_crore: 980,
+        land_area_hectares: 210,
+        affected_families_count: 120,
+        title_dispute_rate_percent: 6.0,
+        sia_approval_status: "Approved",
+        forest_clearance_status: "Pending",
+        fund_disbursement_percent: 30,
+        compensation_multiplier_demand: 1.5,
+        local_protest_flag: false
+      },
+      solar: {
+        project_id: "SECI-SOLAR-PARK",
+        project_type: "Energy",
+        state: "Gujarat",
+        terrain_type: "Plain",
+        estimated_cost_inr_crore: 750,
+        land_area_hectares: 400,
+        affected_families_count: 40,
+        title_dispute_rate_percent: 2.0,
+        sia_approval_status: "Approved",
+        forest_clearance_status: "Not_Required",
+        fund_disbursement_percent: 75,
+        compensation_multiplier_demand: 1.2,
+        local_protest_flag: false
+      }
+    };
+
+    function loadPreset(key) {
+      const p = presets[key];
+      if (!p) return;
+      document.getElementById('project_id').value = p.project_id;
+      document.getElementById('project_type').value = p.project_type;
+      document.getElementById('state').value = p.state;
+      document.getElementById('terrain_type').value = p.terrain_type;
+      document.getElementById('estimated_cost_inr_crore').value = p.estimated_cost_inr_crore;
+      document.getElementById('land_area_hectares').value = p.land_area_hectares;
+      document.getElementById('affected_families_count').value = p.affected_families_count;
+      document.getElementById('title_dispute_rate_percent').value = p.title_dispute_rate_percent;
+      document.getElementById('sia_approval_status').value = p.sia_approval_status;
+      document.getElementById('forest_clearance_status').value = p.forest_clearance_status;
+      document.getElementById('fund_disbursement_percent').value = p.fund_disbursement_percent;
+      document.getElementById('compensation_multiplier_demand').value = p.compensation_multiplier_demand;
+      document.getElementById('local_protest_flag').checked = p.local_protest_flag;
+      
+      runPrediction();
+    }
+
+    async function runPrediction() {
+      const btn = document.getElementById('submitBtn');
+      const spinner = document.getElementById('btnSpinner');
+      const btnText = document.getElementById('btnText');
+      
+      btn.disabled = true;
+      spinner.style.display = 'inline-block';
+      btnText.textContent = 'Calculating Inference...';
+
+      const payload = {
+        project_id: document.getElementById('project_id').value,
+        project_type: document.getElementById('project_type').value,
+        state: document.getElementById('state').value,
+        terrain_type: document.getElementById('terrain_type').value,
+        estimated_cost_inr_crore: parseFloat(document.getElementById('estimated_cost_inr_crore').value) || 1000.0,
+        land_area_hectares: parseFloat(document.getElementById('land_area_hectares').value) || 100.0,
+        affected_families_count: parseInt(document.getElementById('affected_families_count').value) || 100,
+        title_dispute_rate_percent: parseFloat(document.getElementById('title_dispute_rate_percent').value) || 5.0,
+        sia_approval_status: document.getElementById('sia_approval_status').value,
+        forest_clearance_status: document.getElementById('forest_clearance_status').value,
+        fund_disbursement_percent: parseFloat(document.getElementById('fund_disbursement_percent').value) || 10.0,
+        compensation_multiplier_demand: parseFloat(document.getElementById('compensation_multiplier_demand').value) || 1.5,
+        local_protest_flag: document.getElementById('local_protest_flag').checked,
+        project_start_year: 2024
+      };
+
+      try {
+        const resp = await fetch('/predict', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': 'super-secret-token'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!resp.ok) {
+          throw new Error('Server returned ' + resp.status);
+        }
+
+        const data = await resp.json();
+        renderResults(data);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        spinner.style.display = 'none';
+        btnText.textContent = 'Predict Risk & Timeline';
+      }
+    }
+
+    function renderResults(data) {
+      const preds = data.predictions;
+      const explain = data.explainability;
+
+      document.getElementById('kpiProb').textContent = preds.delay_probability + '%';
+      
+      const tier = preds.calibrated_risk_tier;
+      const tierEl = document.getElementById('kpiTier');
+      tierEl.textContent = tier.toUpperCase();
+      tierEl.className = 'tier-badge tier-' + tier;
+
+      const crsScore = (preds.delay_probability * 0.5 + (Math.min(preds.predicted_delay_days, 500) / 500) * 50).toFixed(1);
+      document.getElementById('kpiCRS').innerHTML = `${crsScore}<span style="font-size:1rem;color:#64748b;">/100</span>`;
+      
+      document.getElementById('kpiDelay').innerHTML = `${preds.predicted_delay_days} <span style="font-size:1rem;color:#64748b;">Days</span>`;
+      document.getElementById('kpiDelayMonths').textContent = `≈ ${(preds.predicted_delay_days / 30).toFixed(1)} Months Schedule Drift`;
+
+      document.getElementById('kpiSurvival').innerHTML = `${preds.median_survival_days} <span style="font-size:1rem;color:#64748b;">Days</span>`;
+      document.getElementById('kpiPhase').textContent = preds.predicted_delay_days < 90 ? 'Immediate' : preds.predicted_delay_days < 180 ? 'Short-term' : 'Long-term';
+
+      if (explain && explain.top_risk_drivers) {
+        const driversEl = document.getElementById('driversContainer');
+        driversEl.innerHTML = '';
+        explain.top_risk_drivers.slice(0, 5).forEach(d => {
+          const pct = Math.min(100, Math.max(10, Math.round(d.impact_score * 100)));
+          const direction = d.direction === 'increases_delay' ? '🔴 Increases Delay' : '🟢 Mitigates Delay';
+          driversEl.innerHTML += `
+            <div class="bar-item">
+              <div class="bar-header">
+                <span><strong>${d.feature.replace(/_/g, ' ')}</strong> <span style="font-size:0.75rem; color:#94a3b8;">(${direction})</span></span>
+                <span>${(d.impact_score * 100).toFixed(1)}%</span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width: ${pct}%;"></div>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      if (explain && explain.category_breakdown) {
+        const cats = explain.category_breakdown;
+        document.getElementById('catSocio').textContent = ((cats.socio_legal_disputes || 0) * 100).toFixed(1) + '%';
+        document.getElementById('catEnv').textContent = ((cats.environmental_clearance || 0) * 100).toFixed(1) + '%';
+        document.getElementById('catAdmin').textContent = ((cats.administrative_workflow || 0) * 100).toFixed(1) + '%';
+        document.getElementById('catFin').textContent = ((cats.financial_disbursement || 0) * 100).toFixed(1) + '%';
+      }
+    }
+
+    document.getElementById('riskForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      runPrediction();
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      runPrediction();
+    });
+  </script>
+</body>
+</html>

@@ -71,15 +71,35 @@ monitor: ModelMonitor = None
 def load_artifacts():
     global system, monitor
     try:
+        import os
+        pipeline_path = 'models/final_pipeline_cpu.joblib' if os.path.exists('models/final_pipeline_cpu.joblib') else 'pipeline.joblib'
+        ensemble_path = 'models/sih_risk_engine_final.joblib' if os.path.exists('models/sih_risk_engine_final.joblib') else 'ensemble.joblib'
+        timeline_path = 'models/final_timeline_predictor_cpu.joblib' if os.path.exists('models/final_timeline_predictor_cpu.joblib') else 'timeline.joblib'
+        
         system = RiskAnalysisSystem(
-            pipeline_path='models/final_pipeline_cpu.joblib',
-            ensemble_path='models/sih_risk_engine_final.joblib',
-            timeline_path='models/final_timeline_predictor_cpu.joblib'
+            pipeline_path=pipeline_path,
+            ensemble_path=ensemble_path,
+            timeline_path=timeline_path
         )
         monitor = ModelMonitor()
         logging.info("RiskAnalysisSystem and Monitor successfully loaded.")
     except Exception as e:
         logging.error(f"Failed to load artifacts: {e}")
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "system_ready": system is not None,
+        "monitor_ready": monitor is not None
+    }
+
+@app.get("/")
+def serve_home():
+    from fastapi.responses import FileResponse, RedirectResponse
+    if os.path.exists("dashboard/index.html"):
+        return FileResponse("dashboard/index.html")
+    return RedirectResponse(url="/docs")
 
 @app.post("/predict")
 @limiter.limit("10/minute")

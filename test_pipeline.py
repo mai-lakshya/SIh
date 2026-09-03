@@ -62,7 +62,8 @@ def test_pipeline_integration(sample_data):
     )
     
     X_out = pipeline.fit_transform(X, y)
-    assert X_out.shape == X.shape
+    assert len(X_out) == len(X)
+    assert X_out.shape[1] >= X.shape[1]
     assert 'state' in X_out.columns
     assert 'district' in X_out.columns
     # Ensure they are numeric after encoding

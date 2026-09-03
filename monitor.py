@@ -34,15 +34,50 @@ class Alert:
             "metrics": self.metrics
         }
 
+class SQLiteConnectionWrapper:
+    def __init__(self, db_path='monitoring.db'):
+        import sqlite3
+        self.conn = sqlite3.connect(db_path)
+        self.conn.row_factory = sqlite3.Row
+    def cursor(self):
+        return SQLiteCursorWrapper(self.conn.cursor())
+    def commit(self):
+        self.conn.commit()
+    def close(self):
+        self.conn.close()
+
+class SQLiteCursorWrapper:
+    def __init__(self, cur):
+        self.cur = cur
+    def _translate(self, query):
+        return query.replace('%s', '?').replace('INT AUTO_INCREMENT PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT').replace('AUTO_INCREMENT PRIMARY KEY', 'PRIMARY KEY AUTOINCREMENT')
+    def execute(self, query, params=None):
+        q = self._translate(query)
+        if params is None:
+            return self.cur.execute(q)
+        return self.cur.execute(q, params)
+    def executemany(self, query, seq):
+        q = self._translate(query)
+        return self.cur.executemany(q, seq)
+    def fetchone(self):
+        row = self.cur.fetchone()
+        return dict(row) if row else None
+    def fetchall(self):
+        rows = self.cur.fetchall()
+        return [dict(r) for r in rows] if rows else []
+
 class ModelMonitor:
     def __init__(self):
         self.db_host = os.getenv('DB_HOST', 'localhost')
         self.db_user = os.getenv('DB_USER', 'root')
         self.db_password = os.getenv('DB_PASSWORD', 'rootpassword')
         self.db_name = os.getenv('DB_NAME', 'monitoring')
+        self.use_sqlite = False
         self._init_db()
         
     def _get_connection(self):
+        if self.use_sqlite:
+            return SQLiteConnectionWrapper('monitoring.db')
         return pymysql.connect(
             host=self.db_host,
             user=self.db_user,
@@ -52,23 +87,15 @@ class ModelMonitor:
         )
 
     def _init_db(self):
-        # Wait for DB to be ready
-        retries = 10
-        while retries > 0:
-            try:
-                # First connect without DB to create it if it doesn't exist
-                conn = pymysql.connect(host=self.db_host, user=self.db_user, password=self.db_password)
-                cursor = conn.cursor()
-                cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.db_name}")
-                conn.commit()
-                conn.close()
-                break
-            except Exception as e:
-                retries -= 1
-                time.sleep(3)
-                
-        if retries == 0:
-            raise ConnectionError("Could not connect to MySQL database.")
+        try:
+            conn = pymysql.connect(host=self.db_host, user=self.db_user, password=self.db_password, connect_timeout=1)
+            cursor = conn.cursor()
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.db_name}")
+            conn.commit()
+            conn.close()
+        except Exception:
+            # Fall back to local SQLite database
+            self.use_sqlite = True
 
         conn = self._get_connection()
         cursor = conn.cursor()

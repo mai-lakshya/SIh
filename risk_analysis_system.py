@@ -110,6 +110,8 @@ class RiskAnalysisSystem:
                 "delay_probability": float(delay_prob),
                 "crs": float(crs),
                 "predicted_delay_days": float(delay_days),
+                "delay_days": float(delay_days),
+                "risk_tier": risk_tier,
                 "calibrated_risk_tier": risk_tier
             },
             "timeline": {
