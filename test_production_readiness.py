@@ -26,7 +26,7 @@ def artifacts():
         timeline = joblib.load('timeline.joblib')
         
         # Load sample data to initialize explainer
-        df = pd.read_csv('Revolution-main/indian_infrastructure_projects_dataset.csv')
+        df = pd.read_csv('indian_infrastructure_projects_dataset.csv')
         X = df.drop(columns=['delay_binary_label', 'Actual_Delay_Days', 'CRS', 'project_index'], errors='ignore')
         X_tf = pipeline.transform(X.head(200))
         explainer = DualParadigmExplainer(predictor, X_tf.columns.tolist(), X_tf)
@@ -86,67 +86,73 @@ def test_unseen_categorical_avalanche(artifacts):
         pytest.fail(f"Predictor crashed on unseen category inference: {e}")
 
 # ==========================================
-# MODULE 9: EXPLAINABILITY (SHAP) ROBUSTNESS & JITTER
+# MODULE 9: EXPLAINABILITY STABILITY & FALLBACK (XAI)
 # ==========================================
 def test_shap_feature_perturbation_stability(artifacts):
-    pipeline, predictor, _, explainer, _, base_X = artifacts
-    
+    pipeline, _, _, explainer, _, base_X = artifacts
+
+    # Run explanation on baseline payload
     P_base = base_X.iloc[[0]].copy()
-    X_base = pipeline.transform(P_base)
-    
-    # Ensure columns match explainer
-    X_base = X_base[explainer.feature_names]
-    
-    exp_base = explainer.generate_explanation(X_base, predictor.predict(X_base))
-    base_drivers = [d[0] for d in exp_base['risk_drivers'][:3]]
-    
-    # P_plus (+0.1%)
-    X_plus = X_base.copy()
-    numeric_cols = X_plus.select_dtypes(include=[np.number]).columns
-    X_plus[numeric_cols] = X_plus[numeric_cols] * 1.001
-    exp_plus = explainer.generate_explanation(X_plus, predictor.predict(X_plus))
-    plus_drivers = [d[0] for d in exp_plus['risk_drivers'][:3]]
-    
-    # P_minus (-0.1%)
-    X_minus = X_base.copy()
-    X_minus[numeric_cols] = X_minus[numeric_cols] * 0.999
-    exp_minus = explainer.generate_explanation(X_minus, predictor.predict(X_minus))
-    minus_drivers = [d[0] for d in exp_minus['risk_drivers'][:3]]
-    
-    if base_drivers != plus_drivers or base_drivers != minus_drivers:
-        pytest.xfail("SHAP risk drivers are unstable under 0.1% jitter due to deep tree boundaries.")
-    assert base_drivers == plus_drivers == minus_drivers
+    X_tf_base = pipeline.transform(P_base)
+    base_explanation = explainer.explain(X_tf_base)
+
+    assert "risk_drivers" in base_explanation
+    base_top3 = [rd["feature"] for rd in base_explanation["risk_drivers"][:3]]
+    assert len(base_top3) > 0
+
+    # Add continuous feature jitter within +/- 0.1% to numerical inputs
+    P_perturbed = P_base.copy()
+    np.random.seed(42)
+    for col in P_perturbed.select_dtypes(include=[np.number]).columns:
+        jitter = np.random.uniform(-0.001, 0.001)
+        P_perturbed[col] = P_perturbed[col] * (1.0 + jitter)
+
+    X_tf_pert = pipeline.transform(P_perturbed)
+    pert_explanation = explainer.explain(X_tf_pert)
+
+    pert_top3 = [rd["feature"] for rd in pert_explanation["risk_drivers"][:3]]
+
+    # Assert that top-3 identified risk drivers remain consistent (rank stability)
+    overlap = len(set(base_top3).intersection(set(pert_top3)))
+    assert overlap >= 2, f"Rank stability violated under 0.1% jitter: base={base_top3}, pert={pert_top3}"
+
 
 def test_lime_fallback_schema_consistency(artifacts):
-    pipeline, predictor, _, explainer, _, base_X = artifacts
-    
+    pipeline, predictor, _, _, _, base_X = artifacts
+
     P_base = base_X.iloc[[0]].copy()
-    X_base = pipeline.transform(P_base)
-    X_base = X_base[explainer.feature_names]
-    
-    # Save SHAP
-    shap_xgb = explainer.shap_explainer_xgb
-    shap_lgb = explainer.shap_explainer_lgb
-    
-    # Mock SHAP to None to force fallback path (returns zeros in current explainer)
-    explainer.shap_explainer_xgb = None
-    explainer.shap_explainer_lgb = None
-    
-    try:
-        exp_fallback = explainer.generate_explanation(X_base, predictor.predict(X_base))
-    except Exception as e:
-        pytest.fail(f"Explainer crashed without SHAP: {e}")
-    finally:
-        # Restore
-        explainer.shap_explainer_xgb = shap_xgb
-        explainer.shap_explainer_lgb = shap_lgb
-        
-    expected_keys = {
-        'prediction_summary', 'risk_drivers', 'feature_contributions', 
-        'risk_breakdown', 'similar_projects', 'mitigation_actions', 'confidence_score'
-    }
-    
-    assert set(exp_fallback.keys()) == expected_keys, "Fallback explanation schema mismatch."
+    X_tf = pipeline.transform(P_base)
+
+    # Test graceful degradation path when SHAP calculation is disabled/fails
+    fallback_explainer = DualParadigmExplainer(predictor, list(X_tf.columns), background_data=None)
+    fallback_explainer.tree_models = {}  # Disable TreeSHAP to trigger fallback
+
+    payload = fallback_explainer.explain(X_tf)
+
+    # Assert returned payload adheres strictly to the primary explanation schema
+    assert "global_importance_approx" in payload, "Missing global_importance_approx"
+    assert "local_explanation_full" in payload, "Missing local_explanation_full"
+    assert "category_breakdown" in payload, "Missing category_breakdown"
+    assert "risk_drivers" in payload, "Missing risk_drivers"
+
+    for rd in payload["risk_drivers"]:
+        assert "feature" in rd
+        assert "impact_score" in rd
+        assert "direction" in rd
+        assert "source" in rd
+        assert np.isfinite(rd["impact_score"])
+        assert 0.0 <= rd["impact_score"] <= 1.0
+
+    for item in payload["local_explanation_full"]:
+        assert "feature" in item
+        assert "value" in item
+        assert "shap_impact" in item
+        assert "attention" in item
+        assert "unified_score" in item
+        assert np.isfinite(item["unified_score"])
+
+    bd = payload["category_breakdown"]
+    assert pytest.approx(sum(bd.values()), abs=1e-3) == 1.0
 
 # ==========================================
 # MODULE 10: ALGORITHMIC FAIRNESS & REGIONAL BIAS

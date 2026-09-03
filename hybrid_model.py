@@ -72,7 +72,8 @@ class TreeWrapperBase(BaseEstimator):
         X_np = X.values if hasattr(X, 'values') else X
         return self.model.predict(X_np)
 
-class TreeWrapperClassifier(TreeWrapperBase, ClassifierMixin):
+class TreeWrapperClassifier(ClassifierMixin, TreeWrapperBase):
+    _estimator_type = "classifier"
     def __init__(self, model_class, random_state=42, **kwargs):
         super().__init__(model_class, random_state, **kwargs)
         
@@ -80,7 +81,8 @@ class TreeWrapperClassifier(TreeWrapperBase, ClassifierMixin):
         X_np = X.values if hasattr(X, 'values') else X
         return self.model.predict_proba(X_np)
 
-class TreeWrapperRegressor(TreeWrapperBase, RegressorMixin):
+class TreeWrapperRegressor(RegressorMixin, TreeWrapperBase):
+    _estimator_type = "regressor"
     def __init__(self, model_class, random_state=42, **kwargs):
         super().__init__(model_class, random_state, **kwargs)
 
@@ -161,12 +163,10 @@ class HybridRiskPredictor:
         )
         
         self.classifier = self._build_classifiers()
-        self.classifier.fit(X_train, y_cls_train)
-        
         self.calibrated_classifier = CalibratedClassifierCV(
             estimator=self.classifier,
             method='isotonic',
-            cv='prefit'
+            cv=2
         )
         self.calibrated_classifier.fit(X_calib, y_cls_calib)
         

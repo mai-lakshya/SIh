@@ -6,7 +6,7 @@ from timeline_predictor import NonLinearTimelinePredictor
 
 def main():
     print("Loading data...")
-    df = pd.read_csv('Revolution-main/indian_infrastructure_projects_dataset.csv')
+    df = pd.read_csv('indian_infrastructure_projects_dataset.csv')
     X = df.drop(columns=['delay_binary_label', 'Actual_Delay_Days', 'CRS', 'project_index'], errors='ignore')
     y_binary = df['delay_binary_label']
     

@@ -1,2 +1,22 @@
-# Created by pytest automatically.
-*
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest / Cache
+.pytest_cache/
+CACHEDIR.TAG
+lastfailed
+nodeids
+
+# Logs and runtime artifacts
+*.log
+*.tsv
+*.db
+events.out.tfevents*
+*.tmp
+catboost_info/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+*-checkpoint.ipynb

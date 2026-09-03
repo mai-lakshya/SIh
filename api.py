@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, Security, Request
 from fastapi.security.api_key import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import pandas as pd
 import logging
@@ -18,6 +20,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 # --- Phase 9: Security & Rate Limiting ---
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Land Acquisition Risk API", version="2.0")
+
+# Add CORS Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -32,7 +44,9 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
 class ProjectPayload(BaseModel):
     project_id: Optional[str] = 'NHAI-UNKNOWN'
     state: str
+    district: Optional[str] = 'Unknown'
     land_area_hectares: float
+    land_area_log: Optional[float] = 5.0
     project_type: str
     terrain_type: str
     estimated_cost_inr_crore: float
@@ -41,9 +55,12 @@ class ProjectPayload(BaseModel):
     local_protest_flag: Optional[bool] = False
     compensation_multiplier_demand: Optional[float] = 1.5
     sia_approval_status: Optional[str] = 'Pending'
+    sia_approval_status_risk_score: Optional[float] = 0.5
     section_11_notification_days: Optional[int] = 30
     forest_clearance_status: Optional[str] = 'Not_Required'
+    forest_clearance_status_risk_score: Optional[float] = 0.5
     fund_disbursement_percent: Optional[float] = 10.0
+    project_start_year: Optional[int] = 2022
     project_age_years: Optional[int] = 1
 
 # Global variables
@@ -55,9 +72,9 @@ def load_artifacts():
     global system, monitor
     try:
         system = RiskAnalysisSystem(
-            pipeline_path='pipeline.joblib',
-            ensemble_path='ensemble.joblib',
-            timeline_path='timeline.joblib'
+            pipeline_path='models/final_pipeline_cpu.joblib',
+            ensemble_path='models/sih_risk_engine_final.joblib',
+            timeline_path='models/final_timeline_predictor_cpu.joblib'
         )
         monitor = ModelMonitor()
         logging.info("RiskAnalysisSystem and Monitor successfully loaded.")
@@ -76,6 +93,10 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
     for col in ['C_r', 'F_r', 'H_r', 'W_r', 'P_r']:
         if col not in raw_payload:
             raw_payload[col] = 0.5
+            
+    # Drop section_11_notification_days as it was dropped in training
+    if 'section_11_notification_days' in raw_payload:
+        raw_payload = raw_payload.drop(columns=['section_11_notification_days'])
             
     try:
         result = system.predict(raw_payload)
@@ -109,6 +130,11 @@ async def get_metrics(request: Request, api_key: str = Security(get_api_key)):
         "latest_performance": monitor.get_latest_performance(),
         "recent_alerts": monitor.get_alert_summary(limit=10)
     }
+
+# Mount dashboard frontend at the end to avoid routing conflicts
+import os
+if os.path.exists("dashboard"):
+    app.mount("/", StaticFiles(directory="dashboard", html=True), name="dashboard")
 
 if __name__ == "__main__":
     import uvicorn

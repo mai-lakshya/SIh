@@ -8,7 +8,16 @@ import pandas as pd
 from typing import List, Dict, Any
 from sklearn.metrics import roc_auc_score, brier_score_loss, mean_absolute_error, mean_squared_error
 from scipy.stats import ks_2samp, chi2_contingency
-from evaluate_model import expected_calibration_error
+def expected_calibration_error(y_true, y_prob, n_bins=10):
+    bin_limits = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    for i in range(n_bins):
+        mask = (y_prob >= bin_limits[i]) & (y_prob < bin_limits[i+1])
+        if np.sum(mask) > 0:
+            prob_pred = np.mean(y_prob[mask])
+            prob_true = np.mean(y_true[mask])
+            ece += np.abs(prob_pred - prob_true) * np.sum(mask)
+    return ece / len(y_true)
 
 class Alert:
     def __init__(self, severity: str, message: str, metrics: dict):

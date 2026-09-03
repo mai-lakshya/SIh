@@ -156,7 +156,7 @@ class OOFTargetEncoder(BaseEstimator, TransformerMixin):
                 X_out[col] = X_out[col].map(self.mapping_.get(col, {})).fillna(self.global_mean_).astype(float)
         return X_out
 
-class SMOTENCDynamicWrapper(BaseEstimator, TransformerMixin):
+class SMOTENCDynamicWrapper(BaseEstimator):
     """
     Wrapper for SMOTE-NC that dynamically fetches categorical indices.
     If no categorical features exist, it falls back to regular SMOTE.
@@ -186,10 +186,8 @@ class SMOTENCDynamicWrapper(BaseEstimator, TransformerMixin):
         return X_res, y_res
         
     def fit(self, X, y=None):
+        self.fit_resample(X, y)
         return self
-        
-    def transform(self, X, y=None):
-        return X
 
 def get_preprocessing_pipeline(cat_cols=None, log_cols=None, te_cols=None, use_smote=True):
     """
