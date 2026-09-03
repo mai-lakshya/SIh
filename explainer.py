@@ -218,15 +218,53 @@ class DualParadigmExplainer:
         unified_importance = self._normalize(unified_importance)
         return unified_importance, norm_tree, norm_tabnet
 
+    # Strict column mapping dictionary to prevent geography / area columns from leaking
+    COLUMN_CATEGORY_MAPPING = {
+        # Environmental Clearance
+        "forest_clearance_status": "environmental_clearance",
+        "forest_clearance_status_risk_score": "environmental_clearance",
+        "terrain_type": "environmental_clearance",
+        "environmental": "environmental_clearance",
+        "eco_sensitive": "environmental_clearance",
+
+        # Socio-Legal Disputes
+        "affected_families_count": "socio_legal_disputes",
+        "title_dispute_rate_percent": "socio_legal_disputes",
+        "local_protest_flag": "socio_legal_disputes",
+        "compensation_multiplier_demand": "socio_legal_disputes",
+        "sia_approval_status": "socio_legal_disputes",
+        "sia_approval_status_risk_score": "socio_legal_disputes",
+        "population_density": "socio_legal_disputes",
+
+        # Financial Disbursement
+        "estimated_cost_inr_crore": "financial_disbursement",
+        "fund_disbursement_percent": "financial_disbursement",
+        "financial_density": "financial_disbursement",
+        "financial_burn_rate_to_date": "financial_disbursement",
+        "C_r": "financial_disbursement",
+        "F_r": "financial_disbursement",
+
+        # Administrative Workflow & Geography (strictly non-environmental)
+        "project_id": "administrative_workflow",
+        "project_type": "administrative_workflow",
+        "state": "administrative_workflow",
+        "district": "administrative_workflow",
+        "land_area_hectares": "administrative_workflow",
+        "land_area_log": "administrative_workflow",
+        "project_start_year": "administrative_workflow",
+        "project_age_years": "administrative_workflow",
+        "state_project_type": "administrative_workflow",
+        "H_r": "administrative_workflow",
+        "W_r": "administrative_workflow",
+        "P_r": "administrative_workflow",
+    }
+
     def _compute_category_breakdown(self, feature_scores):
         """
-        Maps feature impact scores to explicit risk categories using strict regex matching.
+        Maps feature impact scores to explicit risk categories using a strict column
+        mapping dictionary to ensure geography features never leak into environmental clearance.
         Guarantees that categories sum cleanly to 1.0.
         """
-        env_pattern = re.compile(r'\b(forest|clearance|environmental|terrain|tree|eco)\b', re.IGNORECASE)
-        soc_pattern = re.compile(r'\b(family|families|protest|dispute|compensation|sia|population|rehabilitation|resettlement)\b', re.IGNORECASE)
-        fin_pattern = re.compile(r'\b(cost|fund|disbursement|deficit|gap|financial|burn|budget)\b', re.IGNORECASE)
-
         breakdown = {
             "environmental_clearance": 0.0,
             "socio_legal_disputes": 0.0,
@@ -236,16 +274,19 @@ class DualParadigmExplainer:
 
         for i, feat in enumerate(self.feature_names):
             score = float(feature_scores[i])
-            feat_lower = feat.lower()
+            category = self.COLUMN_CATEGORY_MAPPING.get(feat)
+            if category is None:
+                feat_lower = feat.lower()
+                if any(w in feat_lower for w in ['forest', 'clearance', 'environmental', 'terrain']):
+                    category = "environmental_clearance"
+                elif any(w in feat_lower for w in ['family', 'families', 'protest', 'dispute', 'compensation', 'sia']):
+                    category = "socio_legal_disputes"
+                elif any(w in feat_lower for w in ['cost', 'fund', 'disbursement', 'financial']):
+                    category = "financial_disbursement"
+                else:
+                    category = "administrative_workflow"
 
-            if env_pattern.search(feat_lower):
-                breakdown["environmental_clearance"] += score
-            elif soc_pattern.search(feat_lower):
-                breakdown["socio_legal_disputes"] += score
-            elif fin_pattern.search(feat_lower):
-                breakdown["financial_disbursement"] += score
-            else:
-                breakdown["administrative_workflow"] += score
+            breakdown[category] += score
 
         total = sum(breakdown.values())
         if total > 0:
