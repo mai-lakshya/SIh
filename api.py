@@ -14,6 +14,7 @@ from slowapi.errors import RateLimitExceeded
 
 from risk_analysis_system import RiskAnalysisSystem
 from monitor import ModelMonitor
+from recommendation_engine import calculate_roi_for_recommendation
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -121,6 +122,47 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
     try:
         result = system.predict(raw_payload)
         
+        # Prescriptive Actions & Dynamic ROI Calculations
+        raw_recs = result.get('recommendations', [])
+        project_cost_inr = payload.estimated_cost_inr_crore * 10_000_000
+        delay_cost_per_day = max(100_000, (project_cost_inr * 0.12) / 365)
+        
+        prescriptive_actions = []
+        for rec in raw_recs:
+            roi_info = calculate_roi_for_recommendation(
+                rec,
+                project_cost=project_cost_inr,
+                delay_cost_per_day=delay_cost_per_day
+            )
+            
+            title = rec.get('issue', 'Mitigation Action')
+            if 'actions' in rec and rec['actions']:
+                title = rec['actions'][0]
+                desc = rec['actions'][1] if len(rec['actions']) > 1 else rec.get('issue', '')
+            else:
+                desc = rec.get('expected_impact', 'Operational intervention')
+                
+            delay_saved = max(1, round(roi_info.get('estimated_delay_days_saved', 30)))
+            cost_savings_cr = round(roi_info.get('cost_savings', 0) / 10_000_000, 1)
+            roi_pct = max(10, round(roi_info.get('roi_percentage', 150)))
+            
+            prescriptive_actions.append({
+                "title": title,
+                "description": desc,
+                "issue": rec.get('issue', title),
+                "actions": rec.get('actions', [title]),
+                "priority": rec.get('priority', 'Medium'),
+                "timeframe": rec.get('timeframe', 'Short-term'),
+                "expected_impact": rec.get('expected_impact', 'Risk reduction'),
+                "avoided_delay": delay_saved,
+                "avoided_delay_days": delay_saved,
+                "cost_savings": cost_savings_cr,
+                "cost_savings_cr": cost_savings_cr,
+                "roi": roi_pct,
+                "roi_percentage": roi_pct,
+                "roi_percent": roi_pct
+            })
+
         # Map to Frontend Schema
         frontend_response = {
             "project_id": payload.project_id,
@@ -133,7 +175,9 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
             "explainability": {
                 "top_risk_drivers": result['explanation']['risk_drivers'],
                 "category_breakdown": result['explanation']['category_breakdown']
-            }
+            },
+            "recommendations": prescriptive_actions,
+            "prescriptive_actions": prescriptive_actions
         }
         return frontend_response
     except Exception as e:

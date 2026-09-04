@@ -897,6 +897,33 @@
         document.getElementById('catAdmin').textContent = ((cats.administrative_workflow || 0) * 100).toFixed(1) + '%';
         document.getElementById('catFin').textContent = ((cats.financial_disbursement || 0) * 100).toFixed(1) + '%';
       }
+
+      const recs = data.prescriptive_actions || data.recommendations;
+      if (recs && recs.length > 0) {
+        const recsContainer = document.getElementById('recommendationsContainer');
+        if (recsContainer) {
+          recsContainer.innerHTML = '';
+          recs.slice(0, 4).forEach(r => {
+            const title = r.title || r.issue || 'Strategic Risk Mitigation';
+            const desc = r.description || (r.actions && r.actions[0]) || r.expected_impact || 'Execute proactive mitigation steps to minimize delay risk.';
+            const delay = r.avoided_delay ?? r.avoided_delay_days ?? r.estimated_delay_days_saved ?? 30;
+            const savings = r.cost_savings_cr ?? r.cost_savings ?? 2.5;
+            const roi = r.roi_percentage ?? r.roi ?? r.roi_percent ?? 250;
+
+            recsContainer.innerHTML += `
+              <div class="rec-item">
+                <div class="rec-title">${title}</div>
+                <div class="rec-desc">${desc}</div>
+                <div class="rec-meta">
+                  <span>⏱️ Avoided Delay: <strong>${delay} Days</strong></span>
+                  <span>💵 Cost Savings: <strong>₹ ${savings} Cr</strong></span>
+                  <span>📈 ROI: <strong>+${roi}%</strong></span>
+                </div>
+              </div>
+            `;
+          });
+        }
+      }
     }
 
     document.getElementById('riskForm').addEventListener('submit', (e) => {
