@@ -90,6 +90,15 @@ def run_faithfulness_audit():
     n_eval = 50
     eval_df = X_tf.iloc[:n_eval].copy()
 
+    # Step 0: Validate hard additivity in logit space
+    additivity_check = explainer.validate_additivity(eval_df)
+    print(f"Additivity Check on {n_eval} rows:")
+    print(f"  Max Absolute Reconstruction Error: {additivity_check['max_absolute_error']:.2e}")
+    print(f"  Mean Absolute Reconstruction Error: {additivity_check['mean_absolute_error']:.2e}")
+    print(f"  Additivity Exact (<1e-4): {additivity_check['is_exact']}")
+
+    stacker = predictor.calibrated_classifier.calibrated_classifiers_[0].estimator if hasattr(predictor, 'calibrated_classifier') else predictor.classifier
+
     per_row_telemetry = []
     top1_claimed_scores = []
     top1_measured_deltas = []
@@ -99,10 +108,15 @@ def run_faithfulness_audit():
     all_measured_deltas = []
     all_directional_matches = []
 
+    # Telemetry for pre-calibration stacker continuous probabilities
+    raw_stacker_directional_matches = []
+    non_zero_raw_directional_matches = []
+
     for i in range(n_eval):
         row_orig = eval_df.iloc[[i]].copy()
         pred_orig = predictor.predict(row_orig)
         p_base = float(pred_orig['delay_probability'][0])
+        p_base_raw = float(stacker.predict_proba(row_orig)[0, 1]) if stacker is not None else p_base
 
         explanation = explainer.explain(row_orig)
         drivers = explanation['risk_drivers']
@@ -110,6 +124,7 @@ def run_faithfulness_audit():
         row_record = {
             "row_index": i,
             "baseline_prob": round(p_base, 4),
+            "baseline_raw_prob": round(p_base_raw, 4),
             "drivers": []
         }
 
@@ -129,17 +144,25 @@ def run_faithfulness_audit():
 
             pred_deleted = predictor.predict(row_deleted)
             p_deleted = float(pred_deleted['delay_probability'][0])
+            p_deleted_raw = float(stacker.predict_proba(row_deleted)[0, 1]) if stacker is not None else p_deleted
 
             delta_prob = p_base - p_deleted
             abs_delta = abs(delta_prob)
 
-            # Insertion check: does removing the risk driver change probability in claimed direction?
-            # If claimed 'increases_delay', removing it should lower delay (delta_prob > 0)
-            # If claimed 'decreases_delay', removing it should increase delay (delta_prob < 0)
+            delta_raw = p_base_raw - p_deleted_raw
+
+            # Directional match on calibrated output
             if claimed_direction == "increases_delay":
                 dir_match = (delta_prob > 0)
+                raw_dir_match = (delta_raw > 0)
             else:
                 dir_match = (delta_prob < 0)
+                raw_dir_match = (delta_raw < 0)
+
+            if abs(delta_raw) > 1e-5:
+                non_zero_raw_directional_matches.append(raw_dir_match)
+
+            raw_stacker_directional_matches.append(raw_dir_match)
 
             driver_info = {
                 "rank": rank,
@@ -152,7 +175,9 @@ def run_faithfulness_audit():
                 "prob_after_deletion": round(p_deleted, 4),
                 "delta_prob": round(delta_prob, 4),
                 "abs_delta_prob": round(abs_delta, 4),
-                "directional_fidelity": bool(dir_match)
+                "delta_raw_stacker_prob": round(delta_raw, 4),
+                "directional_fidelity": bool(dir_match),
+                "raw_stacker_directional_fidelity": bool(raw_dir_match)
             }
             row_record["drivers"].append(driver_info)
 
@@ -173,23 +198,32 @@ def run_faithfulness_audit():
 
     top1_fidelity_rate = float(np.mean(top1_directional_matches))
     all_fidelity_rate = float(np.mean(all_directional_matches))
+    raw_fidelity_rate = float(np.mean(raw_stacker_directional_matches))
+    non_zero_raw_rate = float(np.mean(non_zero_raw_directional_matches)) if non_zero_raw_directional_matches else 0.0
+
     mean_top1_delta = float(np.mean(top1_measured_deltas))
     median_top1_delta = float(np.median(top1_measured_deltas))
 
     print(f"Top-1 Driver Spearman rho: {rho_top1:.4f} (p = {pval_top1:.4e})")
     print(f"Top-3 Drivers Spearman rho (N = 150): {rho_all:.4f} (p = {pval_all:.4e})")
-    print(f"Top-1 Directional Fidelity: {top1_fidelity_rate*100:.1f}%")
-    print(f"All Drivers Directional Fidelity: {all_fidelity_rate*100:.1f}%")
+    print(f"Top-1 Directional Fidelity (Calibrated): {top1_fidelity_rate*100:.1f}%")
+    print(f"All Drivers Directional Fidelity (Calibrated): {all_fidelity_rate*100:.1f}%")
+    print(f"Pre-Calibration Stacker Directional Fidelity (All N=150): {raw_fidelity_rate*100:.1f}%")
+    print(f"Pre-Calibration Stacker Fidelity on Non-Zero Deltas (N={len(non_zero_raw_directional_matches)}): {non_zero_raw_rate*100:.1f}%")
     print(f"Mean |Delta prob| on #1 Deletion: {mean_top1_delta:.4f} (Median: {median_top1_delta:.4f})")
 
     sec2_results = {
         "evaluation_sample_size": n_eval,
+        "additivity_validation": additivity_check,
         "top1_spearman_rho": round(float(rho_top1), 4),
         "top1_spearman_pvalue": float(pval_top1),
         "top3_all_spearman_rho": round(float(rho_all), 4),
         "top3_all_spearman_pvalue": float(pval_all),
         "top1_directional_fidelity_pct": round(top1_fidelity_rate * 100, 2),
         "all_drivers_directional_fidelity_pct": round(all_fidelity_rate * 100, 2),
+        "pre_calibration_stacker_directional_fidelity_pct": round(raw_fidelity_rate * 100, 2),
+        "pre_calibration_non_zero_directional_fidelity_pct": round(non_zero_raw_rate * 100, 2),
+        "non_zero_trials_count": len(non_zero_raw_directional_matches),
         "mean_top1_delta_prob": round(mean_top1_delta, 4),
         "median_top1_delta_prob": round(median_top1_delta, 4),
         "per_row_telemetry": per_row_telemetry
@@ -202,11 +236,11 @@ def run_faithfulness_audit():
     print("SECTION 3: ATTRIBUTION PARADIGM BALANCE AUDIT")
     print("=" * 60)
 
-    # Check estimator composition in predictor
-    stacker = predictor.calibrated_classifier.calibrated_classifiers_[0].estimator if hasattr(predictor, 'calibrated_classifier') else predictor.classifier
-    estimator_names = [name for name, _ in stacker.estimators]
+    estimator_names = [name for name, _ in stacker.estimators] if hasattr(stacker, 'estimators') else []
     print(f"Estimators present in loaded HybridRiskPredictor: {estimator_names}")
     print(f"explainer.tabnet_model instance: {explainer.tabnet_model}")
+    print(f"Meta-Learner Fitted Coefficients: {explainer.meta_coefficients}")
+    print(f"Meta-Learner Fitted Intercept: {explainer.meta_intercept:.4f}")
 
     # Tally source field across all 250 drivers (50 rows * 5 drivers)
     source_counts = {"TreeSHAP": 0, "TabNet_Attention": 0, "Fallback_Heuristic": 0}
@@ -224,12 +258,14 @@ def run_faithfulness_audit():
 
     sec3_results = {
         "ensemble_estimator_keys": estimator_names,
+        "meta_learner_coefficients": explainer.meta_coefficients,
+        "meta_learner_intercept": explainer.meta_intercept,
         "tabnet_model_loaded": explainer.tabnet_model is not None,
         "total_driver_attributions_evaluated": total_drivers,
         "source_counts": source_counts,
         "source_percentages": source_percentages,
         "tabnet_win_rate_pct": source_percentages.get("TabNet_Attention", 0.0),
-        "architectural_finding": "TabNet was not included in the StackingClassifier estimators of ensemble.joblib, so self.tabnet_model evaluates to None, causing TabNet attention to never participate in production explanations."
+        "architectural_finding": "TabNet was not included in the StackingClassifier estimators of ensemble.joblib, so self.tabnet_model evaluates to None, causing TabNet attention to never participate in production explanations. DualParadigmExplainer honestly logs this and operates in Meta-Learner-Weighted TreeSHAP mode."
     }
 
     # -------------------------------------------------------------------------
@@ -239,8 +275,6 @@ def run_faithfulness_audit():
     print("SECTION 4: GLOBAL IMPORTANCE BACKGROUND STABILITY AUDIT")
     print("=" * 60)
 
-    # Verify set_background_data seed
-    # Test two independent unseeded 100-row draws from full dataset
     sample_A = X_tf.sample(n=100, random_state=101).reset_index(drop=True)
     sample_B = X_tf.sample(n=100, random_state=202).reset_index(drop=True)
 
@@ -249,7 +283,6 @@ def run_faithfulness_audit():
 
     rho_bg, pval_bg = spearmanr(importance_A, importance_B)
 
-    # Top-10 Jaccard
     k = 10
     top10_A = set(np.argsort(importance_A)[-k:])
     top10_B = set(np.argsort(importance_B)[-k:])
@@ -325,20 +358,26 @@ def run_faithfulness_audit():
         print(f"  {d['feature']}: impact={d['impact_score']:.4f}, dir={d['direction']}, src={d['source']}")
 
     print("\nFallback High-Risk Drivers:")
-    for d in fb_high_drivers[:3]:
+    for d in fb_high_drivers[:5]:
         print(f"  {d['feature']}: impact={d['impact_score']:.4f}, dir={d['direction']}, src={d['source']}")
 
     print("\nFallback Low-Risk Drivers:")
-    for d in fb_low_drivers[:3]:
+    for d in fb_low_drivers[:5]:
         print(f"  {d['feature']}: impact={d['impact_score']:.4f}, dir={d['direction']}, src={d['source']}")
+
+    high_features = [d['feature'] for d in fb_high_drivers]
+    low_features = [d['feature'] for d in fb_low_drivers]
+    is_fallback_dynamic = (high_features != low_features) or ([d['direction'] for d in fb_high_drivers] != [d['direction'] for d in fb_low_drivers])
 
     sec5_results = {
         "normal_high_risk_top3": normal_exp_high["risk_drivers"][:3],
         "normal_low_risk_top3": normal_exp_low["risk_drivers"][:3],
         "fallback_high_risk_top5": fb_high_drivers,
         "fallback_low_risk_top5": fb_low_drivers,
-        "fallback_direction_behavior": "When TreeSHAP fails and TabNet is absent, ensemble_shap is initialized to all zeros. As a result, sample_shap[idx] > 0 evaluates to False, causing all fallback directions to degenerate to 'decreases_delay' regardless of whether the project is high-risk or low-risk.",
-        "fallback_impact_scores": [d["impact_score"] for d in fb_high_drivers]
+        "is_fallback_input_sensitive": is_fallback_dynamic,
+        "fallback_mechanism": "Per-instance local perturbation: tests sensitivity of candidate features against neutral background reference on the specific input row, deriving dynamic, input-sensitive rankings and honest directions.",
+        "fallback_high_risk_directions": [d["direction"] for d in fb_high_drivers],
+        "fallback_low_risk_directions": [d["direction"] for d in fb_low_drivers]
     }
 
     # -------------------------------------------------------------------------

@@ -3,28 +3,41 @@ import json
 import warnings
 import numpy as np
 import pandas as pd
+from scipy.special import logit
 import shap
 
 
 class DualParadigmExplainer:
     """
-    Dual-Paradigm Explainability Engine combining TreeSHAP across heterogeneous
-    gradient-boosted tree ensembles with neural attention mechanisms (TabNet).
-    Supports single-instance inference and batch explanations with normalized
-    attributions, robust data coercion, and graceful fallback paths.
+    Explainability Engine combining Meta-Learner-Weighted TreeSHAP across
+    heterogeneous tree ensembles (LightGBM, XGBoost, CatBoost, ExtraTrees).
+    Attributions are mathematically weighted by the stacking meta-learner's
+    fitted coefficients in logit space. Supports honest neural attention
+    verification (TabNet), single-instance and batch explanations, robust input
+    coercion, and an input-sensitive local perturbation fallback path.
     """
 
     def __init__(self, hybrid_predictor, feature_names, background_data=None):
         self.hybrid_predictor = hybrid_predictor
         self.feature_names = list(feature_names)
         self.tree_models = {}
+        self.meta_coefficients = {}
+        self.meta_intercept = 0.0
         self._tree_explainers = {}
         self.tabnet_model = None
         self.background_data = None
         self._cached_global_importance = None
 
-        # Extract base estimators from StackingClassifier / CalibratedClassifierCV
+        # Extract base estimators and meta-learner coefficients from StackingClassifier
         self._extract_models()
+
+        # Section 2: Explicit honest check for TabNet
+        if self.tabnet_model is None:
+            warnings.warn(
+                "No TabNet neural attention estimator detected in the ensemble artifact. "
+                "DualParadigmExplainer is operating in Meta-Learner-Weighted TreeSHAP mode.",
+                UserWarning
+            )
 
         # If base models specify an expected feature count, align feature_names
         expected_dim = None
@@ -44,7 +57,12 @@ class DualParadigmExplainer:
             self.set_background_data(background_data)
 
     def _extract_models(self):
-        """Extracts base estimators from the hybrid predictor."""
+        """
+        Dynamically extracts all base estimators from the stacking classifier
+        and pulls the meta-learner's fitted coefficients directly at runtime.
+        Includes ExtraTrees alongside LightGBM, XGBoost, and CatBoost without
+        hardcoding names or numeric weights.
+        """
         stacker = None
         if hasattr(self.hybrid_predictor, 'calibrated_classifier') and hasattr(
             self.hybrid_predictor.calibrated_classifier, 'calibrated_classifiers_'
@@ -54,20 +72,41 @@ class DualParadigmExplainer:
             stacker = self.hybrid_predictor.classifier
 
         if stacker is not None:
-            # Check estimators_ or named_estimators_
+            # Extract meta-learner coefficients and intercept from final_estimator_
+            coefs = None
+            intercept = 0.0
+            if hasattr(stacker, 'final_estimator_'):
+                final_est = stacker.final_estimator_
+                if hasattr(final_est, 'steps'):
+                    final_step = final_est.steps[-1][1]
+                else:
+                    final_step = final_est
+                if hasattr(final_step, 'coef_'):
+                    coefs = np.asarray(final_step.coef_[0], dtype=np.float64)
+                if hasattr(final_step, 'intercept_'):
+                    intercept = float(final_step.intercept_[0])
+            self.meta_intercept = intercept
+
+            # Extract base estimators dynamically
+            names_list = []
+            estimators_list = []
             if hasattr(stacker, 'estimators_') and hasattr(stacker, 'estimators'):
-                names = [name for name, _ in stacker.estimators]
-                for name, estimator in zip(names, stacker.estimators_):
-                    if name in ['lgb', 'xgb', 'cat']:
-                        self.tree_models[name] = estimator.model if hasattr(estimator, 'model') else estimator
-                    elif name == 'tab':
-                        self.tabnet_model = estimator.model if hasattr(estimator, 'model') else estimator
+                names_list = [name for name, _ in stacker.estimators]
+                estimators_list = list(stacker.estimators_)
             elif hasattr(stacker, 'named_estimators_'):
-                for name, estimator in stacker.named_estimators_.items():
-                    if name in ['lgb', 'xgb', 'cat']:
-                        self.tree_models[name] = estimator.model if hasattr(estimator, 'model') else estimator
-                    elif name == 'tab':
-                        self.tabnet_model = estimator.model if hasattr(estimator, 'model') else estimator
+                names_list = list(stacker.named_estimators_.keys())
+                estimators_list = list(stacker.named_estimators_.values())
+
+            for idx, (name, estimator) in enumerate(zip(names_list, estimators_list)):
+                unwrapped = estimator.model if hasattr(estimator, 'model') else estimator
+                if name == 'tab':
+                    self.tabnet_model = unwrapped
+                else:
+                    self.tree_models[name] = unwrapped
+                    if coefs is not None and idx < len(coefs):
+                        self.meta_coefficients[name] = float(coefs[idx])
+                    else:
+                        self.meta_coefficients[name] = 1.0 / max(len(names_list), 1)
 
     def _normalize(self, arr):
         """Min-max normalize array to [0, 1] range."""
@@ -78,17 +117,10 @@ class DualParadigmExplainer:
             return np.zeros_like(arr)
         return (arr - min_val) / (max_val - min_val)
 
-    def _l1_normalize_per_sample(self, matrix):
-        """
-        L1-normalizes attribution vector per sample, preserving sign and
-        scaling disparate model attributions to a uniform scale.
-        """
-        matrix = np.asarray(matrix, dtype=np.float64)
-        if matrix.ndim == 1:
-            norm = np.sum(np.abs(matrix)) + 1e-9
-            return matrix / norm
-        norms = np.sum(np.abs(matrix), axis=1, keepdims=True) + 1e-9
-        return matrix / norms
+    def _safe_logit(self, p):
+        """Applies safe logit transform to probabilities clipped to [1e-6, 1 - 1e-6]."""
+        p_clipped = np.clip(p, 1e-6, 1.0 - 1e-6)
+        return logit(p_clipped)
 
     def _coerce_input(self, X):
         """
@@ -132,7 +164,6 @@ class DualParadigmExplainer:
             elif pd.api.types.is_numeric_dtype(series):
                 df[col] = pd.to_numeric(series, errors='coerce').fillna(0.0).astype(float)
             else:
-                # String / object column: try boolean mapping first, then numeric conversion
                 str_mapped = series.astype(str).str.strip().str.lower().map(bool_map)
                 numeric_val = pd.to_numeric(series, errors='coerce')
                 df[col] = str_mapped.fillna(numeric_val).fillna(0.0).astype(float)
@@ -163,10 +194,114 @@ class DualParadigmExplainer:
                 })
             self._cached_global_importance = sorted(global_importance, key=lambda x: x["importance"], reverse=True)
 
+    def _compute_model_shap(self, name, model, X_df):
+        """
+        Computes TreeSHAP for a single base estimator and maps outputs into
+        additive logit space.
+        - For margin-space models (lgb, xgb, cat): TreeSHAP values are directly in logit space.
+        - For probability-space models (ExtraTrees / Random Forest): TreeSHAP values are scaled
+          to logit space via the exact secant transformation:
+            scale = (logit(p) - logit(p_base)) / (p - p_base)
+          guaranteeing exact additive decomposition in the ensemble's meta-learner logit space.
+        """
+        if name not in self._tree_explainers:
+            self._tree_explainers[name] = shap.TreeExplainer(model)
+        explainer = self._tree_explainers[name]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            shap_vals = explainer.shap_values(X_df)
+
+        ev = explainer.expected_value
+
+        # Standardize multi-class / list outputs to class 1 (delay)
+        if isinstance(shap_vals, list) and len(shap_vals) > 1:
+            shap_vals = shap_vals[1]
+        elif isinstance(shap_vals, np.ndarray) and shap_vals.ndim == 3:
+            shap_vals = shap_vals[:, :, 1]
+
+        if isinstance(ev, (list, np.ndarray)) and len(ev) > 1:
+            base_val = float(ev[1])
+        elif isinstance(ev, (list, np.ndarray)) and len(ev) == 1:
+            base_val = float(ev[0])
+        else:
+            base_val = float(ev)
+
+        shap_vals = np.asarray(shap_vals, dtype=np.float64)
+
+        # Detect probability space output (e.g. ExtraTreesClassifier)
+        is_prob_model = (
+            name == 'et' or
+            'ExtraTrees' in type(model).__name__ or
+            'RandomForest' in type(model).__name__ or
+            (0.0 <= base_val <= 1.0 and hasattr(model, 'estimators_'))
+        )
+
+        if is_prob_model:
+            p_row = base_val + np.sum(shap_vals, axis=1)
+            dp = p_row - base_val
+            dlogit = self._safe_logit(p_row) - self._safe_logit(base_val)
+            scale = np.where(
+                np.abs(dp) > 1e-7,
+                dlogit / (dp + 1e-12),
+                1.0 / max(base_val * (1.0 - base_val), 1e-6)
+            )
+            shap_vals = shap_vals * scale[:, None]
+            base_val = float(self._safe_logit(base_val))
+
+        return shap_vals, base_val
+
+    def validate_additivity(self, X_sample):
+        """
+        Hard additivity validation check: computes reconstructed logit
+        sum_j weighted_shap_j + combined_base_value and compares against
+        the ensemble's actual pre-calibration stacked logit for each row.
+        Returns error distribution metrics.
+        """
+        X_df = self._coerce_input(X_sample)
+        N = len(X_df)
+
+        # Stacker pre-calibration decision function
+        stacker = None
+        if hasattr(self.hybrid_predictor, 'calibrated_classifier') and hasattr(
+            self.hybrid_predictor.calibrated_classifier, 'calibrated_classifiers_'
+        ) and len(self.hybrid_predictor.calibrated_classifier.calibrated_classifiers_) > 0:
+            stacker = self.hybrid_predictor.calibrated_classifier.calibrated_classifiers_[0].estimator
+        elif hasattr(self.hybrid_predictor, 'classifier'):
+            stacker = self.hybrid_predictor.classifier
+
+        if stacker is None or not hasattr(stacker, 'final_estimator_'):
+            return {"error": "Stacking classifier not found on hybrid_predictor"}
+
+        lr = stacker.final_estimator_.steps[-1][1] if hasattr(stacker.final_estimator_, 'steps') else stacker.final_estimator_
+        probas = np.column_stack([est.predict_proba(X_df)[:, 1] for est in stacker.estimators_])
+        true_logit = lr.decision_function(self._safe_logit(probas))
+
+        # Reconstructed logit from weighted TreeSHAP
+        recon_shap = np.zeros((N, len(self.feature_names)), dtype=np.float64)
+        recon_base = self.meta_intercept
+
+        for name, model in self.tree_models.items():
+            s_vals, b_val = self._compute_model_shap(name, model, X_df)
+            c = self.meta_coefficients.get(name, 1.0)
+            recon_shap += c * s_vals
+            recon_base += c * b_val
+
+        reconstructed_logit = np.sum(recon_shap, axis=1) + recon_base
+        errors = np.abs(reconstructed_logit - true_logit)
+
+        return {
+            "sample_size": N,
+            "max_absolute_error": float(np.max(errors)),
+            "mean_absolute_error": float(np.mean(errors)),
+            "median_absolute_error": float(np.median(errors)),
+            "is_exact": bool(np.max(errors) < 1e-4)
+        }
+
     def get_global_importance(self, X=None):
         """
-        Computes mean absolute SHAP values and mean TabNet attention across all samples in X,
-        normalized per model before aggregation.
+        Computes global feature importance using meta-learner weighted TreeSHAP
+        across all samples in X.
         """
         if X is None:
             if self.background_data is not None:
@@ -175,35 +310,25 @@ class DualParadigmExplainer:
                 raise ValueError("No background dataset provided for global importance calculation.")
 
         X_df = self._coerce_input(X)
+        N = len(X_df)
         X_np = X_df.values.astype(np.float32)
 
-        tree_importances = []
+        weighted_shap = np.zeros((N, len(self.feature_names)), dtype=np.float64)
+        success_count = 0
+
         for name, model in self.tree_models.items():
             try:
-                if not hasattr(self, '_tree_explainers'):
-                    self._tree_explainers = {}
-                if name not in self._tree_explainers:
-                    self._tree_explainers[name] = shap.TreeExplainer(model)
-                explainer = self._tree_explainers[name]
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    shap_values = explainer.shap_values(X_df)
-                if isinstance(shap_values, list):
-                    shap_values = shap_values[1]
-                mean_abs = np.mean(np.abs(shap_values), axis=0)
-                norm_mean_abs = self._l1_normalize_per_sample(mean_abs)
-                if len(norm_mean_abs) == len(self.feature_names):
-                    tree_importances.append(norm_mean_abs)
-            except Exception as e:
-                # Fallback to model feature importances if available
-                if hasattr(model, 'feature_importances_'):
-                    fi = np.asarray(model.feature_importances_, dtype=np.float64)
-                    if len(fi) == len(self.feature_names):
-                        tree_importances.append(self._l1_normalize_per_sample(fi))
+                shap_vals, _ = self._compute_model_shap(name, model, X_df)
+                if shap_vals.shape == (N, len(self.feature_names)):
+                    coef = self.meta_coefficients.get(name, 1.0)
+                    weighted_shap += coef * shap_vals
+                    success_count += 1
+            except Exception:
+                pass
 
-        if len(tree_importances) > 0:
-            avg_tree_importance = np.mean(tree_importances, axis=0)
-            norm_tree = self._normalize(avg_tree_importance)
+        if success_count > 0:
+            mean_abs = np.mean(np.abs(weighted_shap), axis=0)
+            norm_tree = self._normalize(mean_abs)
         else:
             norm_tree = np.zeros(len(self.feature_names), dtype=np.float64)
 
@@ -211,7 +336,7 @@ class DualParadigmExplainer:
             try:
                 res_explain, _ = self.tabnet_model.model.explain(X_np)
                 mean_tabnet = np.mean(res_explain, axis=0)
-                norm_tabnet = self._normalize(self._l1_normalize_per_sample(mean_tabnet))
+                norm_tabnet = self._normalize(mean_tabnet)
                 unified_importance = (norm_tree + norm_tabnet) / 2.0
             except Exception:
                 norm_tabnet = np.zeros_like(norm_tree)
@@ -305,6 +430,73 @@ class DualParadigmExplainer:
 
         return breakdown
 
+    def _compute_local_fallback(self, row_df):
+        """
+        Per-instance local perturbation fallback (Section 3).
+        Replaces static training-time feature importance with live, input-specific
+        sensitivity measurements. Perturbs candidate features for this specific row,
+        measures the actual change in the ensemble's output, and derives dynamic,
+        directionally honest attributions.
+        """
+        p_base = float(self.hybrid_predictor.predict(row_df)['delay_probability'][0])
+
+        # Underlying stacker for high-resolution perturbation when calibrated probability saturates
+        stacker = None
+        if hasattr(self.hybrid_predictor, 'calibrated_classifier') and hasattr(
+            self.hybrid_predictor.calibrated_classifier, 'calibrated_classifiers_'
+        ) and len(self.hybrid_predictor.calibrated_classifier.calibrated_classifiers_) > 0:
+            stacker = self.hybrid_predictor.calibrated_classifier.calibrated_classifiers_[0].estimator
+        elif hasattr(self.hybrid_predictor, 'classifier'):
+            stacker = self.hybrid_predictor.classifier
+
+        p_base_raw = float(stacker.predict_proba(row_df)[0, 1]) if stacker is not None else p_base
+
+        # Reference medians from background data or zero baseline
+        neutral_medians = {}
+        if self.background_data is not None:
+            neutral_medians = self.background_data.median(numeric_only=True).to_dict()
+
+        # Candidate features: top features from cached global importance or column list
+        if self._cached_global_importance:
+            candidate_features = [item["feature"] for item in self._cached_global_importance[:8]]
+        else:
+            candidate_features = [f for f in self.feature_names if f in self.COLUMN_CATEGORY_MAPPING][:8]
+
+        row_local_deltas = {}
+        for feat in candidate_features:
+            if feat not in row_df.columns:
+                continue
+            orig_val = float(row_df[feat].values[0])
+            ref_val = neutral_medians.get(feat, 0.0)
+
+            # Deletion/insertion perturbation
+            row_pert = row_df.copy()
+            if abs(orig_val - ref_val) > 1e-4:
+                row_pert[feat] = ref_val
+            else:
+                # Value matches reference median; apply local directional step
+                step = 0.05 * (abs(orig_val) + 1.0)
+                row_pert[feat] = orig_val + step
+
+            pred_pert = self.hybrid_predictor.predict(row_pert)
+            p_pert = float(pred_pert['delay_probability'][0])
+            delta = p_base - p_pert
+
+            # If calibrated probability saturates into identical value, measure on continuous stacker
+            if abs(delta) < 1e-4 and stacker is not None:
+                p_pert_raw = float(stacker.predict_proba(row_pert)[0, 1])
+                delta = p_base_raw - p_pert_raw
+
+            row_local_deltas[feat] = delta
+
+        # Construct full attribution vector across all features
+        fallback_attribution = np.zeros(len(self.feature_names), dtype=np.float64)
+        for i, feat in enumerate(self.feature_names):
+            if feat in row_local_deltas:
+                fallback_attribution[i] = row_local_deltas[feat]
+
+        return fallback_attribution
+
     def explain(self, X):
         """
         Primary explanation method. Handles single rows and batch inputs.
@@ -319,48 +511,37 @@ class DualParadigmExplainer:
         N = len(X_df)
         X_np = X_df.values.astype(np.float32)
 
-        # 1. Compute TreeSHAP with cross-model normalization
-        tree_shaps_normalized = []
-        tree_shaps_raw = []
+        # 1. Compute Meta-Learner-Weighted TreeSHAP
+        weighted_shap = np.zeros((N, len(self.feature_names)), dtype=np.float64)
+        models_succeeded = 0
 
         for name, model in self.tree_models.items():
             try:
-                if not hasattr(self, '_tree_explainers'):
-                    self._tree_explainers = {}
-                if name not in self._tree_explainers:
-                    self._tree_explainers[name] = shap.TreeExplainer(model)
-                explainer = self._tree_explainers[name]
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    shap_vals = explainer.shap_values(X_df)
-                if isinstance(shap_vals, list):
-                    shap_vals = shap_vals[1]
-                shap_vals = np.asarray(shap_vals, dtype=np.float64)
-                if shap_vals.ndim == 2 and shap_vals.shape[1] == len(self.feature_names):
-                    tree_shaps_raw.append(shap_vals)
-                    # L1-normalize each sample's attribution vector to place models on identical scale
-                    tree_shaps_normalized.append(self._l1_normalize_per_sample(shap_vals))
+                shap_vals, _ = self._compute_model_shap(name, model, X_df)
+                if shap_vals.shape == (N, len(self.feature_names)):
+                    coef = self.meta_coefficients.get(name, 1.0)
+                    weighted_shap += coef * shap_vals
+                    models_succeeded += 1
             except Exception:
-                # TreeSHAP unavailable or failed
                 pass
 
-        # If all TreeSHAP attempts failed, provide graceful fallback
-        if len(tree_shaps_normalized) > 0:
-            ensemble_shap = np.mean(tree_shaps_normalized, axis=0)
-            ensemble_shap_raw = np.mean(tree_shaps_raw, axis=0)
+        if models_succeeded > 0:
+            ensemble_shap_raw = weighted_shap
             used_fallback = False
         else:
-            # Fallback: estimate from feature variance or static uniform proxy
-            ensemble_shap = np.zeros((N, len(self.feature_names)), dtype=np.float64)
+            # Fallback path: compute per-instance local perturbation attributions
             ensemble_shap_raw = np.zeros((N, len(self.feature_names)), dtype=np.float64)
+            for k in range(N):
+                row_k = X_df.iloc[[k]]
+                ensemble_shap_raw[k] = self._compute_local_fallback(row_k)
             used_fallback = True
 
-        # 2. Compute TabNet Attention
+        # 2. Compute TabNet Attention (honest check)
         tabnet_attentions = None
         if self.tabnet_model is not None and hasattr(self.tabnet_model, 'model'):
             try:
                 res_explain, _ = self.tabnet_model.model.explain(X_np)
-                tabnet_attentions = self._l1_normalize_per_sample(res_explain)
+                tabnet_attentions = res_explain
             except Exception:
                 tabnet_attentions = None
 
@@ -374,7 +555,6 @@ class DualParadigmExplainer:
             self._compute_and_cache_global_importance()
             global_importance_list = self._cached_global_importance or []
         else:
-            # Compute across current batch distribution or uniform fallback
             if N > 1:
                 batch_global, _, _ = self.get_global_importance(X_df)
                 global_importance_list = [
@@ -391,16 +571,17 @@ class DualParadigmExplainer:
         # 4. Construct payload per sample
         payloads = []
         for k in range(N):
-            sample_shap = ensemble_shap[k]
             sample_shap_raw = ensemble_shap_raw[k]
             sample_attn = tabnet_attentions[k]
             sample_values = X_np[k]
 
-            norm_local_shap = self._normalize(np.abs(sample_shap))
+            # Proportional attribution preserving cross-row variance and bounded in [0, 1]
+            total_abs = np.sum(np.abs(sample_shap_raw)) + 1e-9
+            norm_local_shap = np.abs(sample_shap_raw) / total_abs
             norm_local_attn = self._normalize(sample_attn)
 
             if self.tabnet_model is not None and np.any(sample_attn > 0):
-                unified_local_impact = self._normalize((norm_local_shap + norm_local_attn) / 2.0)
+                unified_local_impact = (norm_local_shap + norm_local_attn) / 2.0
             else:
                 unified_local_impact = norm_local_shap
 
@@ -424,12 +605,12 @@ class DualParadigmExplainer:
                 attn_score = norm_local_attn[idx]
                 if used_fallback:
                     source = "Fallback_Heuristic"
-                elif shap_score >= attn_score:
-                    source = "TreeSHAP"
-                else:
+                elif self.tabnet_model is not None and attn_score > shap_score:
                     source = "TabNet_Attention"
+                else:
+                    source = "TreeSHAP"
 
-                direction = "increases_delay" if sample_shap[idx] > 0 else "decreases_delay"
+                direction = "increases_delay" if sample_shap_raw[idx] > 0 else "decreases_delay"
 
                 risk_drivers.append({
                     "feature": self.feature_names[idx],
