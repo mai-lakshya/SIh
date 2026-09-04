@@ -126,9 +126,9 @@ class HybridRiskPredictor:
                 max_iter=2000,
                 cv=cv,
                 random_state=self.random_state,
-                # Pinned under scikit-learn 1.9.0: default resolves to None (L2 penalty).
-                # The default changes to (0.0,) in version 1.10.
-                l1_ratios=None,
+                # Pinned under scikit-learn 1.9.0: set to (0.0,) representing pure L2 penalty.
+                # Replaces deprecated None to eliminate FutureWarning and ensure full forward-compatibility with 1.10+.
+                l1_ratios=(0.0,),
                 # Pinned under scikit-learn 1.9.0: default is 'accuracy'.
                 # The default changes to 'neg_log_loss' in version 1.11.
                 scoring='accuracy',
