@@ -17,7 +17,7 @@ class DualParadigmExplainer:
     coercion, and an input-sensitive local perturbation fallback path.
     """
 
-    def __init__(self, hybrid_predictor, feature_names, background_data=None):
+    def __init__(self, hybrid_predictor, feature_names, background_data=None, allow_fallback=False):
         self.hybrid_predictor = hybrid_predictor
         self.feature_names = list(feature_names)
         self.tree_models = {}
@@ -27,6 +27,7 @@ class DualParadigmExplainer:
         self.tabnet_model = None
         self.background_data = None
         self._cached_global_importance = None
+        self.allow_fallback = allow_fallback
 
         # Extract base estimators and meta-learner coefficients from StackingClassifier
         self._extract_models()
@@ -99,14 +100,15 @@ class DualParadigmExplainer:
 
             for idx, (name, estimator) in enumerate(zip(names_list, estimators_list)):
                 unwrapped = estimator.model if hasattr(estimator, 'model') else estimator
+                if coefs is not None and idx < len(coefs):
+                    self.meta_coefficients[name] = float(coefs[idx])
+                else:
+                    self.meta_coefficients[name] = 1.0 / max(len(names_list), 1)
+
                 if name == 'tab':
                     self.tabnet_model = unwrapped
                 else:
                     self.tree_models[name] = unwrapped
-                    if coefs is not None and idx < len(coefs):
-                        self.meta_coefficients[name] = float(coefs[idx])
-                    else:
-                        self.meta_coefficients[name] = 1.0 / max(len(names_list), 1)
 
     def _normalize(self, arr):
         """Min-max normalize array to [0, 1] range."""
@@ -256,10 +258,12 @@ class DualParadigmExplainer:
         Hard additivity validation check: computes reconstructed logit
         sum_j weighted_shap_j + combined_base_value and compares against
         the ensemble's actual pre-calibration stacked logit for each row.
+        Includes TabNet contribution when self.tabnet_model is present.
         Returns error distribution metrics.
         """
         X_df = self._coerce_input(X_sample)
         N = len(X_df)
+        X_np = X_df.values.astype(np.float32)
 
         # Stacker pre-calibration decision function
         stacker = None
@@ -287,6 +291,44 @@ class DualParadigmExplainer:
             recon_shap += c * s_vals
             recon_base += c * b_val
 
+        # Reconstructed contribution from TabNet if present
+        if self.tabnet_model is not None:
+            c_tab = self.meta_coefficients.get('tab', 1.0)
+            p_tab = np.asarray(self.tabnet_model.predict_proba(X_df)[:, 1], dtype=np.float64)
+            logit_tab = self._safe_logit(p_tab)
+
+            # Baseline logit for TabNet
+            if self.background_data is not None and len(self.background_data) > 0:
+                p_bg = float(np.mean(self.tabnet_model.predict_proba(self.background_data)[:, 1]))
+                b_tab = float(self._safe_logit(p_bg))
+            else:
+                p_bg = float(np.mean(p_tab))
+                b_tab = float(self._safe_logit(p_bg))
+
+            # Neural attention masks if available
+            attn_masks = None
+            if hasattr(self.tabnet_model, 'explain'):
+                try:
+                    attn_masks, _ = self.tabnet_model.explain(X_np)
+                except Exception:
+                    pass
+            elif hasattr(self.tabnet_model, 'model') and hasattr(self.tabnet_model.model, 'explain'):
+                try:
+                    attn_masks, _ = self.tabnet_model.model.explain(X_np)
+                except Exception:
+                    pass
+
+            if attn_masks is None or not isinstance(attn_masks, np.ndarray) or attn_masks.shape != (N, len(self.feature_names)):
+                attn_masks = np.ones((N, len(self.feature_names)), dtype=np.float64)
+
+            attn_sum = np.sum(attn_masks, axis=1, keepdims=True)
+            norm_attn = np.where(attn_sum > 1e-12, attn_masks / attn_sum, 1.0 / len(self.feature_names))
+            delta_logit_tab = logit_tab - b_tab
+            s_tab = norm_attn * delta_logit_tab[:, None]
+
+            recon_shap += c_tab * s_tab
+            recon_base += c_tab * b_tab
+
         reconstructed_logit = np.sum(recon_shap, axis=1) + recon_base
         errors = np.abs(reconstructed_logit - true_logit)
 
@@ -298,10 +340,11 @@ class DualParadigmExplainer:
             "is_exact": bool(np.max(errors) < 1e-4)
         }
 
-    def get_global_importance(self, X=None):
+    def get_global_importance(self, X=None, allow_fallback=None):
         """
         Computes global feature importance using meta-learner weighted TreeSHAP
-        across all samples in X.
+        across all samples in X. Surfaces warnings for failing models and raises
+        if all fail unless fallback path is enabled.
         """
         if X is None:
             if self.background_data is not None:
@@ -314,7 +357,8 @@ class DualParadigmExplainer:
         X_np = X_df.values.astype(np.float32)
 
         weighted_shap = np.zeros((N, len(self.feature_names)), dtype=np.float64)
-        success_count = 0
+        models_succeeded = 0
+        models_failed = []
 
         for name, model in self.tree_models.items():
             try:
@@ -322,23 +366,43 @@ class DualParadigmExplainer:
                 if shap_vals.shape == (N, len(self.feature_names)):
                     coef = self.meta_coefficients.get(name, 1.0)
                     weighted_shap += coef * shap_vals
-                    success_count += 1
-            except Exception:
-                pass
+                    models_succeeded += 1
+            except Exception as e:
+                warnings.warn(f"Base model '{name}' failed during global importance: {e}", RuntimeWarning)
+                models_failed.append(name)
 
-        if success_count > 0:
+        fallback_enabled = allow_fallback if allow_fallback is not None else self.allow_fallback
+        if len(self.tree_models) > 0 and models_succeeded == 0 and not fallback_enabled:
+            raise RuntimeError(
+                f"All tree models {list(self.tree_models.keys())} failed during global importance: {models_failed}. "
+                "Fallback path is not enabled."
+            )
+
+        if models_succeeded > 0:
             mean_abs = np.mean(np.abs(weighted_shap), axis=0)
             norm_tree = self._normalize(mean_abs)
         else:
             norm_tree = np.zeros(len(self.feature_names), dtype=np.float64)
 
-        if self.tabnet_model is not None and hasattr(self.tabnet_model, 'model'):
+        if self.tabnet_model is not None:
             try:
-                res_explain, _ = self.tabnet_model.model.explain(X_np)
-                mean_tabnet = np.mean(res_explain, axis=0)
-                norm_tabnet = self._normalize(mean_tabnet)
-                unified_importance = (norm_tree + norm_tabnet) / 2.0
-            except Exception:
+                if hasattr(self.tabnet_model, 'explain'):
+                    res_explain, _ = self.tabnet_model.explain(X_np)
+                elif hasattr(self.tabnet_model, 'model') and hasattr(self.tabnet_model.model, 'explain'):
+                    res_explain, _ = self.tabnet_model.model.explain(X_np)
+                else:
+                    res_explain = None
+
+                if res_explain is not None:
+                    mean_tabnet = np.mean(res_explain, axis=0)
+                    norm_tabnet = self._normalize(mean_tabnet)
+                    unified_importance = (norm_tree + norm_tabnet) / 2.0
+                else:
+                    norm_tabnet = np.zeros_like(norm_tree)
+                    unified_importance = norm_tree
+            except Exception as e:
+                warnings.warn(f"TabNet model failed during global importance: {e}", RuntimeWarning)
+                models_failed.append('tab')
                 norm_tabnet = np.zeros_like(norm_tree)
                 unified_importance = norm_tree
         else:
@@ -497,11 +561,13 @@ class DualParadigmExplainer:
 
         return fallback_attribution
 
-    def explain(self, X):
+    def explain(self, X, allow_fallback=None):
         """
         Primary explanation method. Handles single rows and batch inputs.
         Returns a single dictionary payload for single instances, or a list of
-        dictionary payloads for batch inputs.
+        dictionary payloads for batch inputs. Surfaces warnings for failing
+        base models, tracks models_failed in returned payloads, and raises
+        RuntimeError if all models fail unless fallback is enabled.
         """
         is_single = isinstance(X, dict) or isinstance(X, pd.Series) or (
             isinstance(X, (pd.DataFrame, np.ndarray)) and len(X) == 1
@@ -514,6 +580,7 @@ class DualParadigmExplainer:
         # 1. Compute Meta-Learner-Weighted TreeSHAP
         weighted_shap = np.zeros((N, len(self.feature_names)), dtype=np.float64)
         models_succeeded = 0
+        models_failed = []
 
         for name, model in self.tree_models.items():
             try:
@@ -522,8 +589,16 @@ class DualParadigmExplainer:
                     coef = self.meta_coefficients.get(name, 1.0)
                     weighted_shap += coef * shap_vals
                     models_succeeded += 1
-            except Exception:
-                pass
+            except Exception as e:
+                warnings.warn(f"Base model '{name}' failed during attribution: {e}", RuntimeWarning)
+                models_failed.append(name)
+
+        fallback_enabled = allow_fallback if allow_fallback is not None else self.allow_fallback
+        if len(self.tree_models) > 0 and models_succeeded == 0 and not fallback_enabled:
+            raise RuntimeError(
+                f"All tree models {list(self.tree_models.keys())} failed during TreeSHAP attribution: {models_failed}. "
+                "Fallback path is not enabled."
+            )
 
         if models_succeeded > 0:
             ensemble_shap_raw = weighted_shap
@@ -538,11 +613,17 @@ class DualParadigmExplainer:
 
         # 2. Compute TabNet Attention (honest check)
         tabnet_attentions = None
-        if self.tabnet_model is not None and hasattr(self.tabnet_model, 'model'):
+        if self.tabnet_model is not None:
             try:
-                res_explain, _ = self.tabnet_model.model.explain(X_np)
-                tabnet_attentions = res_explain
-            except Exception:
+                if hasattr(self.tabnet_model, 'explain'):
+                    res_explain, _ = self.tabnet_model.explain(X_np)
+                    tabnet_attentions = res_explain
+                elif hasattr(self.tabnet_model, 'model') and hasattr(self.tabnet_model.model, 'explain'):
+                    res_explain, _ = self.tabnet_model.model.explain(X_np)
+                    tabnet_attentions = res_explain
+            except Exception as e:
+                warnings.warn(f"TabNet model failed during attribution: {e}", RuntimeWarning)
+                models_failed.append('tab')
                 tabnet_attentions = None
 
         if tabnet_attentions is None:
@@ -556,7 +637,7 @@ class DualParadigmExplainer:
             global_importance_list = self._cached_global_importance or []
         else:
             if N > 1:
-                batch_global, _, _ = self.get_global_importance(X_df)
+                batch_global, _, _ = self.get_global_importance(X_df, allow_fallback=fallback_enabled)
                 global_importance_list = [
                     {"feature": self.feature_names[i], "importance": float(batch_global[i])}
                     for i in range(len(self.feature_names))
@@ -626,7 +707,8 @@ class DualParadigmExplainer:
                 "risk_drivers": risk_drivers,
                 "category_breakdown": category_breakdown,
                 "local_explanation_full": local_explanation,
-                "global_importance_approx": global_importance_list
+                "global_importance_approx": global_importance_list,
+                "models_failed": list(models_failed)
             })
 
         return payloads[0] if is_single else payloads

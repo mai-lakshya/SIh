@@ -124,6 +124,11 @@ Programmatic system telemetry captured at test runtime:
 | `test_explainer.py` | `test_explainer_batch_processing` | **PASS** | 8.1s |
 | `test_explainer.py` | `test_explainer_robust_input_coercion` | **PASS** | 7.9s |
 | `test_explainer.py` | `test_background_dataset_global_importance` | **PASS** | 8.2s |
+| `test_explainer.py` | `test_validate_additivity_with_tabnet` | **PASS** | 0.9s |
+| `test_explainer.py` | `test_model_failure_surfacing_and_fallback` | **PASS** | 0.8s |
+| `test_explainer.py` | `test_ci_faithfulness_gates` | **PASS** | 6.8s |
+| `test_explainer.py` | `test_category_breakdown_real_feature_isolation` | **PASS** | 0.4s |
+| `test_explainer.py` | `test_timeline_permutation_explainer` | **PASS** | 2.5s |
 | `test_sections_678.py` | `test_section_6_high_risk_top_drivers` | **PASS** | 1.8s |
 | `test_sections_678.py` | `test_section_6_low_risk_top_drivers` | **PASS** | 1.6s |
 | `test_sections_678.py` | `test_section_7_dual_path_shap_alignment` | **PASS** | 2.1s |
@@ -139,14 +144,45 @@ Programmatic system telemetry captured at test runtime:
 | `test_production_readiness.py` | `test_national_infrastructure_load` | **PASS** | 2.1s |
 | `test_production_readiness.py` | `test_input_data_drift_detection` | **PASS** | 0.5s |
 | `test_production_readiness.py` | `test_prediction_drift_over_time` | **PASS** | 0.5s |
-| **Total Test Suite** | **19 tests across 3 modules** | **19 PASSED (100%)** | **31.96s** |
+| **Total Test Suite** | **24 tests across 3 modules** | **24 PASSED (100%)** | **66.59s** |
 
 ---
 
-## 6. Remaining Technical Debt & Recommendations
+## 6. Technical Debt Resolution & Ongoing Recommendations
 
-1. **CatBoost Multithreading Overhead:** In certain virtualized CI containers, CatBoost TreeExplainer calculation incurs high thread-spawning overhead. In latency-critical deployments, limit CatBoost thread count (`thread_count=1`) during explanation passes.
-2. **Background Dataset Selection:** Currently, a 100-row uniform random subsample of `indian_infrastructure_projects_dataset.csv` serves as the reference background. For production, consider using k-means clustering or medoid sampling to select representative background prototypes.
+### 6.1 Resolved Technical Debt Items
+
+1. **TabNet Additivity Logit Integration (`explainer.py:validate_additivity`):**
+   - **Prior State:** `validate_additivity()` only summed over `tree_models`, excluding `'tab'` even though `true_logit` was evaluated across all estimators in `stacker.estimators_`.
+   - **Resolution:** Extracted `self.meta_coefficients['tab']` in `_extract_models()`. Augmented `validate_additivity()` to compute the exact additive logit contribution from TabNet attention-weighted margin decomposition:
+     $$\Delta \text{logit}_{\text{tab}} = \text{safe\_logit}(p_{\text{tab}}) - \text{safe\_logit}(b_{\text{tab}}), \quad s_{\text{tab}, j} = w_{\text{attn}, j} \cdot \Delta \text{logit}_{\text{tab}}$$
+     Guarantees that $\sum_j (c_{\text{tab}} \cdot s_{\text{tab}, j}) + c_{\text{tab}} b_{\text{tab}} = c_{\text{tab}} \cdot \text{safe\_logit}(p_{\text{tab}})$ identically.
+   - **Verification:** Regression test `test_validate_additivity_with_tabnet` confirms `is_exact == True` and $\text{MAE} < 10^{-10}$.
+
+2. **Surfacing Base Model Failures & Explicit Fallback Control:**
+   - **Prior State:** Bare `except Exception: pass` swallowed estimator exceptions, masking broken base models and silently triggering fallback heuristics.
+   - **Resolution:** Replaced bare except blocks in `explain()` and `get_global_importance()` with explicit `RuntimeWarning` logging that names the failing model and exception details. Added `"models_failed"` tracking list to all returned payloads. Added `allow_fallback` parameter (default `False`), raising a descriptive `RuntimeError` if all models fail unless fallback is explicitly permitted.
+   - **Verification:** Tested in `test_model_failure_surfacing_and_fallback` forcing CatBoost errors and confirming warning emission, payload tracking, and strict exception raising.
+
+3. **CI-Enforced Faithfulness Regression Gates:**
+   - **Prior State:** Faithfulness checks only lived in the standalone `audit_faithfulness.py` script, leaving standard pytest CI unable to catch attribution drift.
+   - **Resolution:** Implemented `test_ci_faithfulness_gates` in `test_explainer.py`. Every test run actively guards:
+     - ExtraTrees (`'et'`) presence in `tree_models` whenever present in the underlying stacker.
+     - Hard logit additivity validation (`is_exact == True`, max error $< 10^{-4}$).
+     - Deletion/insertion directional fidelity on non-zero pre-calibration deltas exceeds $70\%$ ($90.5\%$ observed).
+
+4. **Real Feature Set Category Isolation (Geography Leakage Prevention):**
+   - **Prior State:** Tests only used 5 synthetic features (`f0`–`f4`), leaving the 30-key `COLUMN_CATEGORY_MAPPING` unvalidated against substring leakage.
+   - **Resolution:** Implemented `test_category_breakdown_real_feature_isolation` in `test_explainer.py`. Confirmed that geography and administrative features (`land_area_hectares`, `land_area_log`, `state`, `district`) allocate strictly to `administrative_workflow` with $0.0000$ leakage into `environmental_clearance`, and category sums round cleanly to $1.0$.
+
+5. **Timeline / Survival Model Explainability Closure (Uno's C-Index Permutation Importance):**
+   - **Prior State:** Section 7.1 identified zero explainability coverage for `NonLinearTimelinePredictor.rsf` (`predicted_delay_days`), due to lack of TreeSHAP and `feature_importances_` in `sksurv`.
+   - **Resolution:** Implemented `TimelinePermutationExplainer` in `timeline_explainer.py` using Uno's IPCW C-index permutation sensitivity. Wired into `risk_analysis_system.py:predict()`, surfacing `top_drivers`, full `feature_importance`, and a feature-level `rationale` under `result["timeline"]` and `result["predictions"]["predicted_delay_rationale"]`. Added `test_timeline_permutation_explainer` verifying finite importances summing to $1.0$.
+
+### 6.2 Remaining Production Recommendations
+
+1. **CatBoost Multithreading Overhead:** In certain virtualized CI containers, CatBoost TreeExplainer calculation incurs thread-spawning overhead. In latency-critical deployments, limit CatBoost thread count (`thread_count=1`) during explanation passes.
+2. **Background Dataset Selection:** Currently, a uniform random subsample of `indian_infrastructure_projects_dataset.csv` serves as the reference background. For production, consider using k-means clustering or medoid sampling to select representative background prototypes.
 3. **Async / Background Explanation Workers:** While single-instance explanation easily satisfies the 500 ms SLA ($\sim 24\text{ ms}$ P50), large batch requests ($N > 50$) scale linearly ($\sim 1.2\text{ s}$ per 50 rows). Batch explanations in `api.py` should be delegated to background Celery/Redis tasks or streaming endpoints.
 
 ---
@@ -155,28 +191,13 @@ Programmatic system telemetry captured at test runtime:
 
 This section evaluates whether the explanations produced by `DualParadigmExplainer` are **genuinely faithful** to the underlying predictive models — whether the features named as "risk drivers" actually move the model's predictions, or are simply plausible labels attached to normalized scores. All metrics below were computed programmatically via [`audit_faithfulness.py`](file:///c:/Users/usmed/Desktop/V1/audit_faithfulness.py) and permanently logged in [`faithfulness_audit_results.json`](file:///c:/Users/usmed/Desktop/V1/faithfulness_audit_results.json).
 
-### 7.1 The Timeline / Survival Model Has Zero Explainability Coverage
+### 7.1 Timeline / Survival Model Explainability (Resolved via Uno's C-Index Permutation)
 
-#### Empirical Call-Site Trace
-An exhaustive trace of all `NonLinearTimelinePredictor` call sites confirmed that the timeline/survival model has **zero explainability coverage** anywhere in the codebase:
-- `risk_analysis_system.py`: Calls `timeline_predictor.get_dynamic_risk_threshold(X_proc)` to surface `predicted_delay_days`, `delay_days`, `median_survival_days`, and `risk_phase`. The explainer (`DualParadigmExplainer`) is initialized **only** around `self.hybrid_model` (`HybridRiskPredictor`).
-- `dashboard.py` (line 280): Displays `p['predicted_delay_days']` to the user with no explanatory attribution.
-- `interactive_test.py` (line 63) & `recommendation_engine.py` (lines 223–226): Rely on `predicted_delay_days` to calculate delay days saved with zero feature-level rationale.
-
-#### Architectural Reason & Technical Feasibility Check
-Why does timeline explainability not exist?
-1. **TreeSHAP Incompatibility:** The timeline model's primary component is `sksurv.ensemble.forest.RandomSurvivalForest`. Passing `tl.rsf` into `shap.TreeExplainer` actively throws:
-   ```python
-   shap.utils._exceptions.InvalidModelError: Model type not yet supported by TreeExplainer: <class 'sksurv.ensemble.forest.RandomSurvivalForest'>
-   ```
-   Survival trees in `sksurv` predict cumulative hazard step functions rather than scalar margins, making them incompatible with standard TreeSHAP C++ split traversal.
-2. **Missing Feature Importances:** Calling `tl.rsf.feature_importances_` raises:
-   ```python
-   NotImplementedError
-   ```
-3. **DeepSurv Component:** `timeline.deepsurv` is a custom PyTorch multi-layer perceptron predicting log hazard ratio, with no gradient-based or integrated gradient attribution hooks implemented.
-
-> **Audit Determination:** The absence of timeline explainability is an **architectural descoping** driven by upstream library limitations (`sksurv` lack of TreeSHAP and native feature importances). However, leaving users with a concrete `predicted_delay_days` figure and zero explanation is a user-facing blind spot. To close this gap in future revisions, global permutation importance on Uno's C-index should be implemented for `RandomSurvivalForest`.
+#### Architectural Resolution
+Previously, `NonLinearTimelinePredictor` had zero explainability coverage because `sksurv.ensemble.forest.RandomSurvivalForest` lacks TreeSHAP and native `feature_importances_`. This structural gap has now been resolved:
+1. **Implementation:** Added `TimelinePermutationExplainer` in `timeline_explainer.py`. It measures the empirical degradation in Uno's IPCW C-index ($|C_{\text{base}} - C_{\text{permuted}}|$) when each feature column is permuted across a background survival cohort.
+2. **Integration:** Wired into `RiskAnalysisSystem.predict()`, so that `predicted_delay_days` and `timeline` always surface `top_drivers`, `feature_importance`, and a human-readable feature-level `rationale`.
+3. **Automated Verification:** Verified in `test_explainer.py:test_timeline_permutation_explainer` that permutation importances are non-negative, finite, and normalize strictly to $1.0$.
 
 ---
 

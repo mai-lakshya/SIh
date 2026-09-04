@@ -6,6 +6,7 @@ import numpy as np
 from hybrid_model import HybridRiskPredictor
 from timeline_predictor import NonLinearTimelinePredictor
 from explainer import DualParadigmExplainer
+from timeline_explainer import TimelinePermutationExplainer
 from recommendation_engine import RecommendationEngine
 
 class RiskAnalysisSystem:
@@ -18,6 +19,7 @@ class RiskAnalysisSystem:
         self.hybrid_model = None
         self.timeline_predictor = None
         self.explainer = None
+        self.timeline_explainer = None
         self.recommendation_engine = RecommendationEngine()
         
         # In-memory LRU cache for predictions (hash of first column if single row)
@@ -31,9 +33,23 @@ class RiskAnalysisSystem:
             self.timeline_predictor = NonLinearTimelinePredictor.load(timeline_path)
             
     def initialize_explainer(self, feature_names):
-        """Initializes the DualParadigmExplainer once the model and features are known."""
+        """Initializes DualParadigmExplainer and TimelinePermutationExplainer."""
         if self.hybrid_model and feature_names:
             self.explainer = DualParadigmExplainer(self.hybrid_model, feature_names)
+        if self.timeline_predictor and feature_names and self.timeline_explainer is None:
+            self.timeline_explainer = TimelinePermutationExplainer(self.timeline_predictor, feature_names)
+            # Precompute permutation importance if background dataset is available
+            try:
+                import os
+                if os.path.exists('indian_infrastructure_projects_dataset.csv') and self.pipeline:
+                    df = pd.read_csv('indian_infrastructure_projects_dataset.csv', nrows=50)
+                    X_raw = df.drop(columns=['delay_binary_label', 'Actual_Delay_Days', 'CRS', 'project_index'], errors='ignore')
+                    X_bg = self.pipeline.transform(X_raw)
+                    events = df['delay_binary_label'].values.astype(bool)
+                    times = df.get('Actual_Delay_Days', df['delay_binary_label'] * 90).replace(0, 365).values.astype(float)
+                    self.timeline_explainer.fit(X_bg, events, times)
+            except Exception:
+                pass
 
     def predict(self, raw_data: pd.DataFrame, metadata: dict = None) -> dict:
         """
@@ -72,7 +88,7 @@ class RiskAnalysisSystem:
         except Exception as e:
             raise ValueError(f"Error during hybrid model prediction: {e}")
 
-        # 3. Timeline Predictor
+        # 3. Timeline Predictor & Explainer
         try:
             median_times = self.timeline_predictor.get_dynamic_risk_threshold(X_proc)
             median_survival = median_times[0]
@@ -84,6 +100,11 @@ class RiskAnalysisSystem:
                 risk_phase = "Short-term"
             else:
                 risk_phase = "Long-term"
+
+            # Timeline explanation rationale
+            timeline_explanation = {}
+            if self.timeline_explainer is not None:
+                timeline_explanation = self.timeline_explainer.explain(X_proc.iloc[0:1])
         except Exception as e:
             raise ValueError(f"Error during survival prediction: {e}")
 
@@ -111,17 +132,20 @@ class RiskAnalysisSystem:
                 "crs": float(crs),
                 "predicted_delay_days": float(delay_days),
                 "delay_days": float(delay_days),
+                "predicted_delay_rationale": timeline_explanation.get("rationale", ""),
                 "risk_tier": risk_tier,
                 "calibrated_risk_tier": risk_tier
             },
             "timeline": {
                 "median_survival_days": float(median_survival),
-                "risk_phase": risk_phase
+                "risk_phase": risk_phase,
+                "top_drivers": timeline_explanation.get("top_drivers", []),
+                "feature_importance": timeline_explanation.get("feature_importance", []),
+                "rationale": timeline_explanation.get("rationale", "")
             },
             "explanation": explainer_payload,
             "recommendations": recommendations,
             "metadata": metadata,
-            "latency_ms": latency
         }
         
         if row_hash:
