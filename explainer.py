@@ -18,6 +18,7 @@ class DualParadigmExplainer:
         self.hybrid_predictor = hybrid_predictor
         self.feature_names = list(feature_names)
         self.tree_models = {}
+        self._tree_explainers = {}
         self.tabnet_model = None
         self.background_data = None
         self._cached_global_importance = None
@@ -179,7 +180,11 @@ class DualParadigmExplainer:
         tree_importances = []
         for name, model in self.tree_models.items():
             try:
-                explainer = shap.TreeExplainer(model)
+                if not hasattr(self, '_tree_explainers'):
+                    self._tree_explainers = {}
+                if name not in self._tree_explainers:
+                    self._tree_explainers[name] = shap.TreeExplainer(model)
+                explainer = self._tree_explainers[name]
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     shap_values = explainer.shap_values(X_df)
@@ -320,7 +325,11 @@ class DualParadigmExplainer:
 
         for name, model in self.tree_models.items():
             try:
-                explainer = shap.TreeExplainer(model)
+                if not hasattr(self, '_tree_explainers'):
+                    self._tree_explainers = {}
+                if name not in self._tree_explainers:
+                    self._tree_explainers[name] = shap.TreeExplainer(model)
+                explainer = self._tree_explainers[name]
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     shap_vals = explainer.shap_values(X_df)

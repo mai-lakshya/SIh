@@ -186,6 +186,7 @@ def test_section_7_dual_path_shap_alignment(models_and_explainer):
     dual_impacts = [item["unified_score"] for item in dual_payload["local_explanation_full"]]
     corr, _ = spearmanr(dual_impacts, xgb_shap_0)
 
+    print(f"\n[Section 7 Benchmark] Top-5 Jaccard: {jaccard:.4f} (threshold >= 0.6), Spearman rho: {corr:.4f} (threshold >= 0.4)")
     # Assert top-5 driver Jaccard similarity >= 0.6
     assert jaccard >= 0.6, f"Top-5 driver Jaccard similarity ({jaccard:.4f}) is below 0.6 threshold. Shared: {intersection}"
     assert corr >= 0.4, f"Spearman rank correlation ({corr:.4f}) is below 0.4 threshold."
@@ -225,5 +226,6 @@ def test_section_8_latency_benchmark_and_sla(models_and_explainer, sample_payloa
 
     p50_expl = float(np.percentile(expl_times, 50))
     p95_expl = float(np.percentile(expl_times, 95))
+    print(f"\n[Section 8 Benchmark] Single-run latency: {latency_ms:.2f}ms, P50: {p50_expl:.2f}ms, P95: {p95_expl:.2f}ms (threshold < 500ms)")
     assert p50_expl < 500, f"Explanation P50 latency ({p50_expl:.1f}ms) exceeded 500ms SLA"
     assert p95_expl < 500, f"Explanation P95 latency ({p95_expl:.1f}ms) exceeded 500ms SLA"

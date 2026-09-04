@@ -39,7 +39,11 @@ class DynamicFeatureTracker(BaseEstimator, TransformerMixin):
                     X_out[c] = "Unknown" if c in getattr(self, 'cat_cols_', []) else 0.0
                 else:
                     if c in getattr(self, 'cat_cols_', []):
-                        X_out[c] = X_out[c].fillna("Unknown")
+                        if pd.api.types.is_bool_dtype(X_out[c]):
+                            if X_out[c].isna().any():
+                                X_out[c] = X_out[c].astype(object).fillna("Unknown")
+                        else:
+                            X_out[c] = X_out[c].fillna("Unknown")
                     else:
                         X_out[c] = pd.to_numeric(X_out[c], errors='coerce').fillna(0.0)
             return X_out[self.feature_names_in_]
@@ -179,12 +183,24 @@ class OOFTargetEncoder(BaseEstimator, TransformerMixin):
                 # Use global mapping learned during fit
                 X_out[col] = X_out[col].map(self.mapping_.get(col, {})).fillna(self.global_mean_).astype(float)
         # Ensure all columns are numeric floats and no residual NaNs or strings
+        bool_map = {
+            True: 1.0, False: 0.0, 1: 1.0, 0: 0.0, 1.0: 1.0, 0.0: 0.0,
+            'true': 1.0, 'false': 0.0, 'True': 1.0, 'False': 0.0, 'TRUE': 1.0, 'FALSE': 0.0,
+            't': 1.0, 'f': 0.0, 'T': 1.0, 'F': 0.0,
+            'yes': 1.0, 'no': 0.0, 'Yes': 1.0, 'No': 0.0, 'YES': 1.0, 'NO': 0.0,
+            'y': 1.0, 'n': 0.0, 'Y': 1.0, 'N': 0.0,
+            '1': 1.0, '0': 0.0
+        }
         for col in X_out.columns:
-            if not pd.api.types.is_numeric_dtype(X_out[col]):
-                mapped = X_out[col].map({'True': 1.0, 'False': 0.0, 'true': 1.0, 'false': 0.0, True: 1.0, False: 0.0})
-                X_out[col] = pd.to_numeric(mapped, errors='coerce').fillna(0.0)
-            else:
-                X_out[col] = pd.to_numeric(X_out[col], errors='coerce').fillna(0.0).astype(float)
+            if col not in self.cols_to_encode_:
+                if pd.api.types.is_bool_dtype(X_out[col]) or col == 'local_protest_flag':
+                    if not pd.api.types.is_numeric_dtype(X_out[col]) or pd.api.types.is_bool_dtype(X_out[col]):
+                        mapped = X_out[col].map(bool_map)
+                        X_out[col] = pd.to_numeric(mapped, errors='coerce').fillna(0.0).astype(float)
+                    else:
+                        X_out[col] = pd.to_numeric(X_out[col], errors='coerce').fillna(0.0).astype(float)
+                else:
+                    X_out[col] = pd.to_numeric(X_out[col], errors='coerce').fillna(0.0).astype(float)
         return X_out
 
 class SMOTENCDynamicWrapper(BaseEstimator):

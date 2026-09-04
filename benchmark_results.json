@@ -1,0 +1,102 @@
+{
+  "telemetry": {
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python_version": "3.14.5 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)]",
+    "python_implementation": "CPython",
+    "cpu_count": 8,
+    "processor": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel",
+    "machine": "AMD64"
+  },
+  "raw_prediction_samples_ms": [
+    55.944,
+    56.414,
+    57.641,
+    58.637,
+    54.462,
+    55.553,
+    55.182,
+    54.371,
+    54.392,
+    54.275,
+    54.694,
+    55.39,
+    54.11,
+    55.414,
+    55.578,
+    54.369,
+    53.917,
+    54.319,
+    54.755,
+    55.746,
+    55.435,
+    54.036,
+    55.122,
+    55.674,
+    55.391
+  ],
+  "prediction_statistics": {
+    "min_ms": 53.92,
+    "p50_ms": 55.18,
+    "mean_ms": 55.23,
+    "p95_ms": 57.4,
+    "max_ms": 58.64,
+    "std_ms": 1.09
+  },
+  "raw_explanation_samples_ms": [
+    27.999,
+    24.157,
+    24.186,
+    23.163,
+    41.358,
+    23.936,
+    29.279,
+    29.683,
+    23.358,
+    23.922,
+    29.765,
+    29.386,
+    22.908,
+    39.213,
+    23.531,
+    22.894,
+    23.718,
+    27.138,
+    22.933,
+    23.146,
+    26.43,
+    30.516,
+    23.756,
+    22.86,
+    23.65
+  ],
+  "explanation_statistics": {
+    "min_ms": 22.86,
+    "p50_ms": 23.94,
+    "mean_ms": 26.52,
+    "p95_ms": 37.47,
+    "max_ms": 41.36,
+    "std_ms": 4.81
+  },
+  "sla_target_ms": 500.0,
+  "sla_met": true,
+  "alignment": {
+    "spearman_rho": 0.5714,
+    "spearman_pvalue": 0.0014921101328326546,
+    "top5_jaccard": 0.6667,
+    "shared_features_count": 4,
+    "top5_dual_paradigm": [
+      "population_density",
+      "terrain_type",
+      "forest_clearance_status",
+      "compensation_multiplier_demand",
+      "H_r"
+    ],
+    "top5_standalone_xgb": [
+      "population_density",
+      "compensation_multiplier_demand",
+      "forest_clearance_status",
+      "H_r",
+      "financial_density"
+    ]
+  }
+}

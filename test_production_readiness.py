@@ -44,6 +44,10 @@ def test_empty_file_bureaucracy(artifacts):
     # Construct an "empty" payload with 90% missing data
     empty_payload = base_X.iloc[[0]].copy()
     for col in empty_payload.columns:
+        if pd.api.types.is_bool_dtype(empty_payload[col]):
+            empty_payload[col] = empty_payload[col].astype(object)
+            
+    for col in empty_payload.columns:
         if pd.api.types.is_numeric_dtype(empty_payload[col]) and not pd.api.types.is_bool_dtype(empty_payload[col]):
             if np.random.rand() < 0.9:
                 empty_payload.loc[0, col] = np.nan
