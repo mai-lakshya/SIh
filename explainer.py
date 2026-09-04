@@ -62,6 +62,21 @@ def _apply_shap_xgb_compatibility_patch():
 _apply_shap_xgb_compatibility_patch()
 
 
+# Ensure unpickled LogisticRegression / LogisticRegressionCV models from scikit-learn >= 1.8
+# work seamlessly when loaded under scikit-learn <= 1.7
+def _patch_sklearn_multi_class():
+    try:
+        from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
+        for cls in (LogisticRegression, LogisticRegressionCV):
+            if not hasattr(cls, 'multi_class'):
+                setattr(cls, 'multi_class', 'auto')
+    except Exception:
+        pass
+
+
+_patch_sklearn_multi_class()
+
+
 class DualParadigmExplainer:
     """
     Explainability Engine combining Meta-Learner-Weighted TreeSHAP across
