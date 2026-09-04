@@ -121,7 +121,25 @@ class HybridRiskPredictor:
         
         meta_classifier = Pipeline([
             ('logit', FunctionTransformer(safe_logit)),
-            ('lr', LogisticRegressionCV(class_weight='balanced', max_iter=2000, cv=cv, random_state=self.random_state))
+            ('lr', LogisticRegressionCV(
+                class_weight='balanced',
+                max_iter=2000,
+                cv=cv,
+                random_state=self.random_state,
+                # Pinned under scikit-learn 1.9.0: default resolves to None (L2 penalty).
+                # The default changes to (0.0,) in version 1.10.
+                l1_ratios=None,
+                # Pinned under scikit-learn 1.9.0: default is 'accuracy'.
+                # The default changes to 'neg_log_loss' in version 1.11.
+                scoring='accuracy',
+                # Pinned under scikit-learn 1.9.0: default is True.
+                # The default changes to False in version 1.10.
+                # Preserves current fitted-attribute behavior and attribute shapes.
+                # NOTE: Flipping this to False in the future is a deliberate migration decision
+                # requiring re-validation of validate_additivity() and the faithfulness benchmarks,
+                # not a silent warning-suppression.
+                use_legacy_attributes=True
+            ))
         ])
         
         return StackingClassifier(
