@@ -20,20 +20,20 @@ def resolve_model_path(filename):
     return None
 
 # Check artifacts existence for skip marks
-PIPELINE_EXISTS = resolve_model_path("final_pipeline_cpu.joblib") is not None
-PREDICTOR_EXISTS = resolve_model_path("sih_risk_engine_final.joblib") is not None
+PIPELINE_EXISTS = resolve_model_path("pipeline.joblib") is not None
+PREDICTOR_EXISTS = resolve_model_path("ensemble.joblib") is not None
 DATASET_EXISTS = os.path.exists("indian_infrastructure_projects_dataset.csv")
 
 pytestmark = pytest.mark.skipif(
     not (PIPELINE_EXISTS and PREDICTOR_EXISTS and DATASET_EXISTS),
-    reason="Model artifacts (final_pipeline_cpu.joblib, sih_risk_engine_final.joblib) or dataset not found on disk"
+    reason="Model artifacts (pipeline.joblib, ensemble.joblib) or dataset not found on disk"
 )
 
 @pytest.fixture(scope="module")
 def models_and_explainer():
     """Initializes pipeline, predictor, background data, and DualParadigmExplainer."""
-    pipe_path = resolve_model_path("final_pipeline_cpu.joblib")
-    pred_path = resolve_model_path("sih_risk_engine_final.joblib")
+    pipe_path = resolve_model_path("pipeline.joblib")
+    pred_path = resolve_model_path("ensemble.joblib")
     
     pipeline = joblib.load(pipe_path)
     predictor = HybridRiskPredictor.load(pred_path)

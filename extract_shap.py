@@ -44,10 +44,10 @@ def run_shap_extraction(final_hybrid=None, pipeline=None, df=None, sample_size=2
     Returns (shap_values, feature_names, mean_abs_shap_dict).
     """
     if final_hybrid is None:
-        model_p = get_model_path("sih_risk_engine_final.joblib")
+        model_p = get_model_path("ensemble.joblib")
         final_hybrid = joblib.load(model_p)
     if pipeline is None:
-        pipe_p = get_model_path("final_pipeline_cpu.joblib")
+        pipe_p = get_model_path("pipeline.joblib")
         pipeline = joblib.load(pipe_p)
     if df is None:
         data_p = "indian_infrastructure_projects_dataset.csv"
@@ -90,8 +90,8 @@ def run_shap_extraction(final_hybrid=None, pipeline=None, df=None, sample_size=2
 if __name__ == "__main__":
     try:
         print("Loading model and data for SHAP extraction...")
-        final_hybrid = joblib.load(get_model_path("sih_risk_engine_final.joblib"))
-        pipeline = joblib.load(get_model_path("final_pipeline_cpu.joblib"))
+        final_hybrid = joblib.load(get_model_path("ensemble.joblib"))
+        pipeline = joblib.load(get_model_path("pipeline.joblib"))
         df = pd.read_csv("indian_infrastructure_projects_dataset.csv")
 
         shap_values, feature_names, shap_dict = run_shap_extraction(final_hybrid, pipeline, df, sample_size=200)

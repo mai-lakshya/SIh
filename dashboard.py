@@ -69,9 +69,9 @@ st.markdown("""
 # Cache Risk Analysis System
 @st.cache_resource
 def load_system():
-    pipeline_path = 'models/final_pipeline_cpu.joblib' if os.path.exists('models/final_pipeline_cpu.joblib') else 'pipeline.joblib'
-    ensemble_path = 'models/sih_risk_engine_final.joblib' if os.path.exists('models/sih_risk_engine_final.joblib') else 'ensemble.joblib'
-    timeline_path = 'models/final_timeline_predictor_cpu.joblib' if os.path.exists('models/final_timeline_predictor_cpu.joblib') else 'timeline.joblib'
+    pipeline_path = 'pipeline.joblib'
+    ensemble_path = 'ensemble.joblib'
+    timeline_path = 'timeline.joblib'
     return RiskAnalysisSystem(pipeline_path, ensemble_path, timeline_path)
 
 @st.cache_resource

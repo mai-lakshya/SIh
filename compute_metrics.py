@@ -21,7 +21,7 @@ y_days = df['section_11_notification_days']
 y_crs = df.get('CRS', y_binary * 100)
 
 print('Loading models...')
-pipeline = joblib.load('final_pipeline_cpu.joblib')
+pipeline = joblib.load('pipeline.joblib')
 hybrid = joblib.load('ensemble.joblib')
 timeline = joblib.load('timeline.joblib')
 

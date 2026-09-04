@@ -1,11 +1,15 @@
 """
 Test compatibility patches across gradient boosted tree and XAI versions.
 """
+import os
+import joblib
 import pytest
 import numpy as np
+import pandas as pd
 import shap
 import shap.explainers._tree as tree_mod
-from explainer import DualParadigmExplainer
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
+from compat import _apply_shap_xgb_compatibility_patch, _patch_sklearn_multi_class
 
 
 def test_shap_xgboost_bracketed_base_score_compatibility():
@@ -32,10 +36,67 @@ def test_shap_xgboost_bracketed_base_score_compatibility():
 
     tree_mod.decode_ubjson_buffer = bracket_injecting_decode
     try:
-        from explainer import _apply_shap_xgb_compatibility_patch
         _apply_shap_xgb_compatibility_patch()
         explainer = shap.TreeExplainer(bst)
         assert explainer is not None
     finally:
-        # Re-apply our standard patch
         _apply_shap_xgb_compatibility_patch()
+
+
+def test_sklearn_multi_class_patch_decision_function_fidelity():
+    """
+    Regression test for _patch_sklearn_multi_class:
+    Loads the real StackingClassifier from ensemble.joblib and asserts that
+    the patched multi_class='auto' default produces the exact same numerical
+    decision_function and predict_proba outputs the model was trained to produce.
+    """
+    ensemble_path = 'ensemble.joblib'
+    pipeline_path = 'pipeline.joblib'
+    dataset_path = 'indian_infrastructure_projects_dataset.csv'
+
+    if not (os.path.exists(ensemble_path) and os.path.exists(pipeline_path) and os.path.exists(dataset_path)):
+        pytest.skip("Required model artifacts or dataset missing for fidelity test")
+
+    pred = joblib.load(ensemble_path)
+    pipe = joblib.load(pipeline_path)
+    df = pd.read_csv(dataset_path, nrows=5)
+    X_raw = df.drop(columns=['delay_binary_label', 'Actual_Delay_Days', 'CRS', 'project_index'], errors='ignore')
+    X_tf = pipe.transform(X_raw)
+
+    stacker = pred.calibrated_classifier.calibrated_classifiers_[0].estimator
+    final_step = stacker.final_estimator_.steps[-1][1] if hasattr(stacker.final_estimator_, 'steps') else stacker.final_estimator_
+
+    # Ground-truth numerical outputs recorded under scikit-learn 1.9.0 training
+    expected_dec_func = np.array([-1.63748238, 7.33138834, 0.86057198, -2.77468232, 0.82530844])
+    expected_proba = np.array([0.16280793, 0.99934576, 0.70278014, 0.05870773, 0.69536201])
+
+    # 1. Verify fidelity with patch applied
+    _patch_sklearn_multi_class()
+    dec_func = stacker.decision_function(X_tf)
+    proba = stacker.predict_proba(X_tf)[:, 1]
+
+    np.testing.assert_allclose(dec_func, expected_dec_func, rtol=1e-4, atol=1e-4,
+                               err_msg="decision_function deviates from artifact ground-truth")
+    np.testing.assert_allclose(proba, expected_proba, rtol=1e-4, atol=1e-4,
+                               err_msg="predict_proba deviates from artifact ground-truth")
+
+    # 2. Simulate older scikit-learn unpickling state where attribute is missing
+    for target in (LogisticRegression, LogisticRegressionCV, type(final_step)):
+        if hasattr(target, 'multi_class'):
+            delattr(target, 'multi_class')
+    if 'multi_class' in final_step.__dict__:
+        del final_step.__dict__['multi_class']
+
+    assert not hasattr(final_step, 'multi_class')
+
+    # Ensure class attribute is restored by patch
+    _patch_sklearn_multi_class()
+    assert getattr(final_step, 'multi_class', None) == 'auto'
+
+    dec_func_post = stacker.decision_function(X_tf)
+    proba_post = stacker.predict_proba(X_tf)[:, 1]
+
+    np.testing.assert_allclose(dec_func_post, expected_dec_func, rtol=1e-4, atol=1e-4,
+                               err_msg="Post-patch decision_function deviates from artifact ground-truth")
+    np.testing.assert_allclose(proba_post, expected_proba, rtol=1e-4, atol=1e-4,
+                               err_msg="Post-patch predict_proba deviates from artifact ground-truth")

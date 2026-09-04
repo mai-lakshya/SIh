@@ -97,9 +97,9 @@ if __name__ == '__main__':
     # 4. Save
     print("Saving models...")
     os.makedirs("models", exist_ok=True)
-    joblib.dump(final_hybrid, "models/sih_risk_engine_final.joblib")
-    joblib.dump(pipeline_final, "models/final_pipeline_cpu.joblib")
-    final_tl.save("models/final_timeline_predictor_cpu.joblib")
+    joblib.dump(final_hybrid, "ensemble.joblib")
+    joblib.dump(pipeline_final, "pipeline.joblib")
+    final_tl.save("timeline.joblib")
     
     # 5. Extract SHAP
     print("Extracting SHAP values...")

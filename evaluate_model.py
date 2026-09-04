@@ -290,9 +290,9 @@ if __name__ == '__main__':
     final_tl.fit(X_proc, y_cls, y_days)
     
     os.makedirs("models", exist_ok=True)
-    joblib.dump(final_hybrid, "models/sih_risk_engine_final.joblib")
-    joblib.dump(pipeline_final, "models/final_pipeline_cpu.joblib")
-    final_tl.save("models/final_timeline_predictor_cpu.joblib")
+    joblib.dump(final_hybrid, "ensemble.joblib")
+    joblib.dump(pipeline_final, "pipeline.joblib")
+    final_tl.save("timeline.joblib")
     
     print("\nPhase 3: Extracting SHAP values from Best Base Model (LightGBM)")
     # Get the fitted LightGBM model from the hybrid model's classifier
