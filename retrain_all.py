@@ -41,6 +41,8 @@ def main():
     timeline = NonLinearTimelinePredictor()
     timeline.train_survival_model(X_tf, y_time, y_binary)
     joblib.dump(timeline, 'timeline.joblib')
+    if hasattr(timeline, 'rsf') and timeline.rsf is not None:
+        joblib.dump(timeline.rsf, 'rsf_only.joblib')
     
     print("Done retraining all artifacts!")
 

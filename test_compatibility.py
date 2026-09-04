@@ -54,8 +54,10 @@ def test_sklearn_multi_class_patch_decision_function_fidelity():
     pipeline_path = 'pipeline.joblib'
     dataset_path = 'indian_infrastructure_projects_dataset.csv'
 
-    if not (os.path.exists(ensemble_path) and os.path.exists(pipeline_path) and os.path.exists(dataset_path)):
-        pytest.skip("Required model artifacts or dataset missing for fidelity test")
+    required_files = [ensemble_path, pipeline_path, dataset_path]
+    missing = [p for p in required_files if not os.path.exists(p)]
+    if missing:
+        pytest.skip(f"Required file(s) missing for fidelity test: {', '.join(missing)}")
 
     pred = joblib.load(ensemble_path)
     pipe = joblib.load(pipeline_path)

@@ -100,6 +100,8 @@ if __name__ == '__main__':
     joblib.dump(final_hybrid, "ensemble.joblib")
     joblib.dump(pipeline_final, "pipeline.joblib")
     final_tl.save("timeline.joblib")
+    if hasattr(final_tl, 'rsf') and final_tl.rsf is not None:
+        joblib.dump(final_tl.rsf, "rsf_only.joblib")
     
     # 5. Extract SHAP
     print("Extracting SHAP values...")

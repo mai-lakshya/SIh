@@ -204,6 +204,13 @@ class NonLinearTimelinePredictor:
 
     def save(self, filepath):
         joblib.dump(self, filepath, compress=3)
+        if hasattr(self, 'rsf') and self.rsf is not None:
+            rsf_path = filepath.replace("timeline.joblib", "rsf_only.joblib")
+            if rsf_path != filepath:
+                try:
+                    joblib.dump(self.rsf, rsf_path, compress=3)
+                except Exception:
+                    pass
 
     @classmethod
     def load(cls, filepath):

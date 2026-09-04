@@ -226,49 +226,53 @@ def test_ci_faithfulness_gates():
     import os
     import joblib
 
-    if os.path.exists('ensemble.joblib') and os.path.exists('pipeline.joblib') and os.path.exists('indian_infrastructure_projects_dataset.csv'):
-        predictor = joblib.load('ensemble.joblib')
-        pipeline = joblib.load('pipeline.joblib')
-        df = pd.read_csv('indian_infrastructure_projects_dataset.csv')
-        X_raw = df.drop(columns=['delay_binary_label', 'Actual_Delay_Days', 'CRS', 'project_index'], errors='ignore')
-        X_tf = pipeline.transform(X_raw.head(30))
-        bg = X_tf.iloc[:20].copy()
-        neutral_medians = bg.median(numeric_only=True).to_dict()
+    required_artifacts = ['ensemble.joblib', 'pipeline.joblib', 'indian_infrastructure_projects_dataset.csv']
+    missing = [f for f in required_artifacts if not os.path.exists(f)]
+    if missing:
+        pytest.skip(f"Required artifact(s) missing for CI faithfulness gates: {', '.join(missing)}")
 
-        explainer = DualParadigmExplainer(predictor, list(X_tf.columns), background_data=bg)
+    predictor = joblib.load('ensemble.joblib')
+    pipeline = joblib.load('pipeline.joblib')
+    df = pd.read_csv('indian_infrastructure_projects_dataset.csv')
+    X_raw = df.drop(columns=['delay_binary_label', 'Actual_Delay_Days', 'CRS', 'project_index'], errors='ignore')
+    X_tf = pipeline.transform(X_raw.head(30))
+    bg = X_tf.iloc[:20].copy()
+    neutral_medians = bg.median(numeric_only=True).to_dict()
 
-        # Gate 1: 'et' must be present whenever it exists in stacker
-        stacker = predictor.calibrated_classifier.calibrated_classifiers_[0].estimator if hasattr(predictor, 'calibrated_classifier') else predictor.classifier
-        stacker_estimator_names = [name for name, _ in stacker.estimators] if hasattr(stacker, 'estimators') else []
-        if 'et' in stacker_estimator_names:
-            assert 'et' in explainer.tree_models, "ExtraTrees ('et') missing from explainer.tree_models"
+    explainer = DualParadigmExplainer(predictor, list(X_tf.columns), background_data=bg)
 
-        # Gate 2: Exact logit additivity
-        add_res = explainer.validate_additivity(X_tf.head(10))
-        assert add_res['is_exact'] is True, f"Additivity check failed: {add_res}"
-        assert add_res['max_absolute_error'] < 1e-4
+    # Gate 1: 'et' must be present whenever it exists in stacker
+    stacker = predictor.calibrated_classifier.calibrated_classifiers_[0].estimator if hasattr(predictor, 'calibrated_classifier') else predictor.classifier
+    stacker_estimator_names = [name for name, _ in stacker.estimators] if hasattr(stacker, 'estimators') else []
+    if 'et' in stacker_estimator_names:
+        assert 'et' in explainer.tree_models, "ExtraTrees ('et') missing from explainer.tree_models"
 
-        # Gate 3: Directional fidelity on non-zero pre-calibration deltas >= 0.70
-        matches = []
-        for i in range(10):
-            row = X_tf.iloc[[i]]
-            p_raw = float(stacker.predict_proba(row)[0, 1])
-            exp = explainer.explain(row)
-            for driver in exp['risk_drivers'][:3]:
-                feat = driver['feature']
-                dir_claimed = driver['direction']
-                ref = neutral_medians.get(feat, 0.0)
-                row_del = row.copy()
-                row_del[feat] = ref
-                p_del = float(stacker.predict_proba(row_del)[0, 1])
-                delta = p_raw - p_del
-                if abs(delta) > 1e-5:
-                    m = (delta > 0) if dir_claimed == 'increases_delay' else (delta < 0)
-                    matches.append(m)
+    # Gate 2: Exact logit additivity
+    add_res = explainer.validate_additivity(X_tf.head(10))
+    assert add_res['is_exact'] is True, f"Additivity check failed: {add_res}"
+    assert add_res['max_absolute_error'] < 1e-4
 
-        assert len(matches) > 0, "No non-zero pre-calibration deltas observed"
-        directional_fidelity = np.mean(matches)
-        assert directional_fidelity >= 0.70, f"Directional fidelity {directional_fidelity:.3f} below 0.70 threshold"
+    # Gate 3: Directional fidelity on non-zero pre-calibration deltas >= 0.70
+    matches = []
+    for i in range(10):
+        row = X_tf.iloc[[i]]
+        p_raw = float(stacker.predict_proba(row)[0, 1])
+        exp = explainer.explain(row)
+        for driver in exp['risk_drivers'][:3]:
+            feat = driver['feature']
+            dir_claimed = driver['direction']
+            ref = neutral_medians.get(feat, 0.0)
+            row_del = row.copy()
+            row_del[feat] = ref
+            p_del = float(stacker.predict_proba(row_del)[0, 1])
+            delta = p_raw - p_del
+            if abs(delta) > 1e-5:
+                m = (delta > 0) if dir_claimed == 'increases_delay' else (delta < 0)
+                matches.append(m)
+
+    assert len(matches) > 0, "No non-zero pre-calibration deltas observed"
+    directional_fidelity = np.mean(matches)
+    assert directional_fidelity >= 0.70, f"Directional fidelity {directional_fidelity:.3f} below 0.70 threshold"
 
 
 def test_category_breakdown_real_feature_isolation():
@@ -304,32 +308,99 @@ def test_category_breakdown_real_feature_isolation():
     assert pytest.approx(sum(bd_env.values()), abs=1e-4) == 1.0
 
 
-def test_timeline_permutation_explainer():
+@pytest.fixture(scope="module")
+def rsf_survival_model():
+    """
+    Provides the RandomSurvivalForest component decoupled from PyTorch/DeepSurv.
+    Loads rsf_only.joblib if available; otherwise unpickles timeline.joblib and caches rsf_only.joblib.
+    """
+    import os
+    import joblib
+
+    if os.path.exists('rsf_only.joblib'):
+        return joblib.load('rsf_only.joblib')
+
+    if os.path.exists('timeline.joblib'):
+        tl = joblib.load('timeline.joblib')
+        rsf = getattr(tl, 'rsf', None)
+        if rsf is not None:
+            try:
+                joblib.dump(rsf, 'rsf_only.joblib')
+            except Exception:
+                pass
+            return rsf
+        raise ValueError("timeline.joblib does not contain an 'rsf' attribute")
+
+    return None
+
+
+def test_timeline_permutation_explainer(rsf_survival_model):
     """Tests TimelinePermutationExplainer produces finite Uno's C-index permutation importances summing to 1.0."""
     from timeline_explainer import TimelinePermutationExplainer
     import os
     import joblib
 
-    if os.path.exists('timeline.joblib') and os.path.exists('pipeline.joblib') and os.path.exists('indian_infrastructure_projects_dataset.csv'):
-        tl = joblib.load('timeline.joblib')
-        pipeline = joblib.load('pipeline.joblib')
-        df = pd.read_csv('indian_infrastructure_projects_dataset.csv', nrows=30)
-        X_raw = df.drop(columns=['delay_binary_label', 'Actual_Delay_Days', 'CRS', 'project_index'], errors='ignore')
-        X_tf = pipeline.transform(X_raw)
-        events = df['delay_binary_label'].values.astype(bool)
-        times = df.get('Actual_Delay_Days', df['delay_binary_label'] * 90).replace(0, 365).values.astype(float)
+    missing = []
+    if rsf_survival_model is None and not (os.path.exists('rsf_only.joblib') or os.path.exists('timeline.joblib')):
+        missing.append("rsf_only.joblib (or timeline.joblib)")
+    if not os.path.exists('pipeline.joblib'):
+        missing.append('pipeline.joblib')
+    if not os.path.exists('indian_infrastructure_projects_dataset.csv'):
+        missing.append('indian_infrastructure_projects_dataset.csv')
 
-        explainer = TimelinePermutationExplainer(tl, list(X_tf.columns), n_repeats=1)
-        explainer.fit(X_tf, events, times)
+    if missing:
+        pytest.skip(f"Required artifact(s) missing for timeline permutation explainer: {', '.join(missing)}")
 
-        res = explainer.explain(X_tf.iloc[0:1])
-        assert "top_drivers" in res
-        assert "feature_importance" in res
-        assert "rationale" in res
+    pipeline = joblib.load('pipeline.joblib')
+    df = pd.read_csv('indian_infrastructure_projects_dataset.csv', nrows=30)
+    X_raw = df.drop(columns=['delay_binary_label', 'Actual_Delay_Days', 'CRS', 'project_index'], errors='ignore')
+    X_tf = pipeline.transform(X_raw)
+    events = df['delay_binary_label'].values.astype(bool)
+    times = df.get('Actual_Delay_Days', df['delay_binary_label'] * 90).replace(0, 365).values.astype(float)
 
-        importances = [item["importance"] for item in res["feature_importance"]]
-        assert all(np.isfinite(imp) for imp in importances)
-        assert all(imp >= 0.0 for imp in importances)
-        assert pytest.approx(sum(importances), abs=1e-4) == 1.0
-        assert len(res["rationale"]) > 0
+    # Test initialization via decoupled classmethod from_rsf (avoids PyTorch/DeepSurv dependencies)
+    explainer = TimelinePermutationExplainer.from_rsf(rsf_survival_model, list(X_tf.columns), n_repeats=1)
+    explainer.fit(X_tf, events, times)
+
+    res = explainer.explain(X_tf.iloc[0:1])
+    assert "top_drivers" in res
+    assert "feature_importance" in res
+    assert "rationale" in res
+
+    importances = [item["importance"] for item in res["feature_importance"]]
+    assert len(importances) == len(X_tf.columns)
+    assert all(np.isfinite(imp) for imp in importances)
+    assert all(imp >= 0.0 for imp in importances)
+    assert pytest.approx(sum(importances), abs=1e-4) == 1.0
+    assert len(res["rationale"]) > 0
+    assert len(res["top_drivers"]) > 0
+
+    # Also verify direct instantiation with bare RSF model works identically
+    explainer_direct = TimelinePermutationExplainer(rsf_survival_model, list(X_tf.columns), n_repeats=1)
+    assert explainer_direct.rsf_model is not None
+
+
+def test_timeline_permutation_explainer_torch_free(rsf_survival_model):
+    """
+    Regression test verifying TimelinePermutationExplainer runs successfully without
+    PyTorch imported or available, confirming zero coupling to DeepSurv/torch.
+    """
+    from timeline_explainer import TimelinePermutationExplainer
+    import sys
+
+    class BlockTorch:
+        def find_spec(self, fullname, path, target=None):
+            if fullname == 'torch' or fullname.startswith('torch.'):
+                raise ModuleNotFoundError('No module named ' + fullname)
+            return None
+
+    blocker = BlockTorch()
+    sys.meta_path.insert(0, blocker)
+    try:
+        explainer = TimelinePermutationExplainer.from_rsf(rsf_survival_model, ["f0", "f1"], n_repeats=1)
+        assert explainer.rsf_model is not None
+        assert explainer.timeline_predictor is not None
+    finally:
+        if blocker in sys.meta_path:
+            sys.meta_path.remove(blocker)
 

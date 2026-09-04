@@ -36,10 +36,48 @@ class TimelinePermutationExplainer:
         self.feature_importances_ = None
         self._cached_importance_list = None
 
-        self.rsf_model = getattr(timeline_predictor, 'rsf', None)
+        if hasattr(timeline_predictor, 'rsf'):
+            self.rsf_model = timeline_predictor.rsf
+        elif hasattr(timeline_predictor, 'predict') and not hasattr(timeline_predictor, 'predict_time_to_delay'):
+            self.rsf_model = timeline_predictor
+        else:
+            self.rsf_model = getattr(timeline_predictor, 'rsf', None)
 
         if background_data is not None and background_events is not None and background_times is not None:
             self.fit(background_data, background_events, background_times)
+
+    @classmethod
+    def from_rsf(
+        cls,
+        rsf_model,
+        feature_names,
+        background_data=None,
+        background_events=None,
+        background_times=None,
+        n_repeats=3,
+        random_state=42
+    ):
+        """
+        Construct a TimelinePermutationExplainer directly from a bare RandomSurvivalForest
+        estimator, decoupling permutation explanations from the full NonLinearTimelinePredictor
+        container and its PyTorch/DeepSurv dependencies.
+        """
+        class _RSFWrapper:
+            def __init__(self, m):
+                self.rsf = m
+
+            def predict(self, X):
+                return self.rsf.predict(X)
+
+        return cls(
+            timeline_predictor=_RSFWrapper(rsf_model),
+            feature_names=feature_names,
+            background_data=background_data,
+            background_events=background_events,
+            background_times=background_times,
+            n_repeats=n_repeats,
+            random_state=random_state
+        )
 
     def fit(self, X_bg, events, times):
         """

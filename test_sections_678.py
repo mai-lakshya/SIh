@@ -20,13 +20,17 @@ def resolve_model_path(filename):
     return None
 
 # Check artifacts existence for skip marks
-PIPELINE_EXISTS = resolve_model_path("pipeline.joblib") is not None
-PREDICTOR_EXISTS = resolve_model_path("ensemble.joblib") is not None
-DATASET_EXISTS = os.path.exists("indian_infrastructure_projects_dataset.csv")
+missing_artifacts = []
+if resolve_model_path("pipeline.joblib") is None:
+    missing_artifacts.append("pipeline.joblib")
+if resolve_model_path("ensemble.joblib") is None:
+    missing_artifacts.append("ensemble.joblib")
+if not os.path.exists("indian_infrastructure_projects_dataset.csv"):
+    missing_artifacts.append("indian_infrastructure_projects_dataset.csv")
 
 pytestmark = pytest.mark.skipif(
-    not (PIPELINE_EXISTS and PREDICTOR_EXISTS and DATASET_EXISTS),
-    reason="Model artifacts (pipeline.joblib, ensemble.joblib) or dataset not found on disk"
+    bool(missing_artifacts),
+    reason=f"Required test artifacts missing: {', '.join(missing_artifacts)}"
 )
 
 @pytest.fixture(scope="module")

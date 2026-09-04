@@ -18,8 +18,10 @@ def main():
     timeline = NonLinearTimelinePredictor()
     timeline.train_survival_model(X_tf, y_time, y_event)
     
-    print("Saving timeline.joblib...")
+    print("Saving timeline.joblib and rsf_only.joblib...")
     joblib.dump(timeline, 'timeline.joblib')
+    if hasattr(timeline, 'rsf') and timeline.rsf is not None:
+        joblib.dump(timeline.rsf, 'rsf_only.joblib')
     print("Done!")
 
 if __name__ == '__main__':
