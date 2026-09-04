@@ -2,27 +2,48 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
+*.pyd
 
-# Pytest / Cache
+# Pytest & Test Caches
 .pytest_cache/
 CACHEDIR.TAG
 lastfailed
 nodeids
 
-# Logs and runtime artifacts
+# Logs, Databases & Runtime artifacts
 *.log
 *.tsv
 *.db
+*.sqlite
+*.sqlite3
+monitoring.db
 events.out.tfevents*
 *.tmp
+*.bak
+*.orig
 catboost_info/
+
+# Environment secrets and credentials
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.cert
+*.crt
+credentials.json
+secrets.json
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
 *-checkpoint.ipynb
+
+# Node & Package Managers
 node_modules/
-.env
-__pycache__/
-*.pyc
+
+# OS Specific
 .DS_Store
-.git/
+Thumbs.db
+desktop.ini

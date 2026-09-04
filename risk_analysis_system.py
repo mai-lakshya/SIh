@@ -1,4 +1,5 @@
 import time
+import threading
 import joblib
 import pandas as pd
 import numpy as np
@@ -22,6 +23,8 @@ class RiskAnalysisSystem:
         self.timeline_explainer = None
         self.recommendation_engine = RecommendationEngine()
         
+        # Thread safety lock for concurrent requests
+        self._lock = threading.RLock()
         # In-memory LRU cache for predictions (hash of first column if single row)
         self._cache = {}
         
@@ -59,11 +62,26 @@ class RiskAnalysisSystem:
         start_time = time.perf_counter()
         
         # Return from cache if single row and seen recently
-        # A rudimentary hash using the values of the first row
+        # A robust hash converting any nested lists/dicts to immutable tuples
         if len(raw_data) == 1:
-            row_hash = hash(tuple(raw_data.iloc[0].values))
-            if row_hash in self._cache:
-                return self._cache[row_hash]
+            def _to_hashable(val):
+                if isinstance(val, (list, tuple)):
+                    return tuple(_to_hashable(x) for x in val)
+                if isinstance(val, dict):
+                    return tuple(sorted((k, _to_hashable(v)) for k, v in val.items()))
+                if isinstance(val, np.ndarray):
+                    return tuple(val.tolist())
+                return val
+
+            try:
+                row_hash = hash(tuple(_to_hashable(v) for v in raw_data.iloc[0].values))
+            except Exception:
+                row_hash = None
+
+            if row_hash is not None:
+                with self._lock:
+                    if row_hash in self._cache:
+                        return self._cache[row_hash]
         else:
             row_hash = None
 
@@ -75,7 +93,9 @@ class RiskAnalysisSystem:
             
         feature_names = list(X_proc.columns)
         if self.explainer is None:
-            self.initialize_explainer(feature_names)
+            with self._lock:
+                if self.explainer is None:
+                    self.initialize_explainer(feature_names)
 
         # 2. Ensemble Predictions
         try:
@@ -149,10 +169,11 @@ class RiskAnalysisSystem:
         }
         
         if row_hash:
-            # Manage simple cache size
-            if len(self._cache) > 100:
-                self._cache.clear()
-            self._cache[row_hash] = result
+            # Manage simple cache size under lock
+            with self._lock:
+                if len(self._cache) > 100:
+                    self._cache.clear()
+                self._cache[row_hash] = result
 
         return result
 

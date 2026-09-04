@@ -3,6 +3,7 @@ import os
 import time
 import datetime
 import json
+import threading
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Any
@@ -34,37 +35,46 @@ class Alert:
             "metrics": self.metrics
         }
 
+_GLOBAL_SQLITE_LOCK = threading.RLock()
+
 class SQLiteConnectionWrapper:
     def __init__(self, db_path='monitoring.db'):
         import sqlite3
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
         self.conn.row_factory = sqlite3.Row
     def cursor(self):
-        return SQLiteCursorWrapper(self.conn.cursor())
+        return SQLiteCursorWrapper(self.conn.cursor(), _GLOBAL_SQLITE_LOCK)
     def commit(self):
-        self.conn.commit()
+        with _GLOBAL_SQLITE_LOCK:
+            self.conn.commit()
     def close(self):
-        self.conn.close()
+        with _GLOBAL_SQLITE_LOCK:
+            self.conn.close()
 
 class SQLiteCursorWrapper:
-    def __init__(self, cur):
+    def __init__(self, cur, lock):
         self.cur = cur
+        self.lock = lock
     def _translate(self, query):
         return query.replace('%s', '?').replace('INT AUTO_INCREMENT PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT').replace('AUTO_INCREMENT PRIMARY KEY', 'PRIMARY KEY AUTOINCREMENT')
     def execute(self, query, params=None):
         q = self._translate(query)
-        if params is None:
-            return self.cur.execute(q)
-        return self.cur.execute(q, params)
+        with self.lock:
+            if params is None:
+                return self.cur.execute(q)
+            return self.cur.execute(q, params)
     def executemany(self, query, seq):
         q = self._translate(query)
-        return self.cur.executemany(q, seq)
+        with self.lock:
+            return self.cur.executemany(q, seq)
     def fetchone(self):
-        row = self.cur.fetchone()
-        return dict(row) if row else None
+        with self.lock:
+            row = self.cur.fetchone()
+            return dict(row) if row else None
     def fetchall(self):
-        rows = self.cur.fetchall()
-        return [dict(r) for r in rows] if rows else []
+        with self.lock:
+            rows = self.cur.fetchall()
+            return [dict(r) for r in rows] if rows else []
 
 class ModelMonitor:
     def __init__(self):
