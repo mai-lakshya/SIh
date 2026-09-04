@@ -1,5 +1,6 @@
 import logging
 import math
+import datetime
 from typing import Dict, List, Any, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from collections import deque
@@ -7,13 +8,43 @@ from collections import deque
 logger = logging.getLogger(__name__)
 
 # =====================================================================
-# 1. TASK & SCHEDULE DATA MODEL FOR DELAY-PREVENTION
+# 1. UTC CALENDAR & LEAP YEAR HELPERS
+# =====================================================================
+
+def ensure_utc(dt: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+    """Ensure a datetime is timezone-aware and converted to UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
+
+def add_days_utc(base_date: datetime.datetime, days: float) -> datetime.datetime:
+    """
+    Accurately add days to a UTC datetime, accounting for leap years
+    (e.g., Feb 29 in 2024, 2028) and fractional day precision.
+    """
+    utc_base = ensure_utc(base_date)
+    return utc_base + datetime.timedelta(days=float(days))
+
+
+def date_diff_days_utc(start_dt: datetime.datetime, end_dt: datetime.datetime) -> float:
+    """Compute exact fractional days between two datetimes in UTC."""
+    s = ensure_utc(start_dt)
+    e = ensure_utc(end_dt)
+    return (e - s).total_seconds() / 86400.0
+
+
+# =====================================================================
+# 2. TASK & SCHEDULE DATA MODEL FOR DELAY-PREVENTION
 # =====================================================================
 
 @dataclass
 class TaskNode:
     """
     Representation of a project milestone / task in the dependency network.
+    Supports both day-duration offsets and concrete UTC calendar dates.
     """
     task_id: str
     name: str
@@ -23,6 +54,10 @@ class TaskNode:
     resources: Dict[str, float] = field(default_factory=dict)
     risk_driver: Optional[str] = None
     category: str = "General"
+    
+    # Concrete calendar dates (UTC)
+    start_date: Optional[datetime.datetime] = None
+    deadline_date: Optional[datetime.datetime] = None
     
     # Computed schedule metrics
     earliest_start: float = 0.0
@@ -36,12 +71,29 @@ class TaskNode:
     cascading_impact_days: float = 0.0
     resource_saturated: bool = False
 
+    # Computed calendar projections (UTC)
+    earliest_start_date: Optional[datetime.datetime] = None
+    earliest_finish_date: Optional[datetime.datetime] = None
+    latest_start_date: Optional[datetime.datetime] = None
+    latest_finish_date: Optional[datetime.datetime] = None
+    calendar_buffer_days: Optional[float] = None
+
+    def __post_init__(self):
+        self.start_date = ensure_utc(self.start_date)
+        self.deadline_date = ensure_utc(self.deadline_date)
+
+    @property
+    def total_float_days(self) -> float:
+        return self.slack
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "task_id": self.task_id,
             "name": self.name,
             "duration_days": self.duration_days,
             "deadline_days": self.deadline_days,
+            "start_date": self.start_date.isoformat() if self.start_date else None,
+            "deadline_date": self.deadline_date.isoformat() if self.deadline_date else None,
             "dependencies": list(self.dependencies),
             "resources": dict(self.resources),
             "risk_driver": self.risk_driver,
@@ -55,12 +107,16 @@ class TaskNode:
             "is_critical": self.is_critical,
             "has_negative_buffer": self.has_negative_buffer,
             "cascading_impact_days": round(self.cascading_impact_days, 2),
-            "resource_saturated": self.resource_saturated
+            "resource_saturated": self.resource_saturated,
+            "earliest_start_date": self.earliest_start_date.isoformat() if self.earliest_start_date else None,
+            "earliest_finish_date": self.earliest_finish_date.isoformat() if self.earliest_finish_date else None,
+            "latest_finish_date": self.latest_finish_date.isoformat() if self.latest_finish_date else None,
+            "calendar_buffer_days": round(self.calendar_buffer_days, 2) if self.calendar_buffer_days is not None else None
         }
 
 
 # =====================================================================
-# 2. CRITICAL CHAIN & CRITICAL PATH SCHEDULE ENGINE
+# 3. CRITICAL CHAIN & CRITICAL PATH SCHEDULE ENGINE
 # =====================================================================
 
 class CriticalChainEngine:
@@ -70,12 +126,12 @@ class CriticalChainEngine:
       - Strict input sanitization and schema validation
       - O(V + E) linear-time topological DAG traversal (Kahn's algorithm)
       - Circular dependency detection with graceful fallback
+      - Timezone-aware UTC date calculations across leap years
       - Edge case handling: Zero-delay states, cascading dependencies,
         negative buffer times, and resource saturation.
     """
 
     def __init__(self, resource_capacities: Optional[Dict[str, float]] = None):
-        # Default resource limits if none specified
         self.resource_capacities = resource_capacities or {
             "legal_officers": 5.0,
             "survey_teams": 4.0,
@@ -117,6 +173,23 @@ class CriticalChainEngine:
                     except (ValueError, TypeError):
                         dl = None
 
+                # Parse optional ISO dates
+                s_date = None
+                if item.get("start_date"):
+                    try:
+                        s_date = datetime.datetime.fromisoformat(str(item["start_date"]))
+                        s_date = ensure_utc(s_date)
+                    except Exception:
+                        s_date = None
+
+                d_date = None
+                if item.get("deadline_date"):
+                    try:
+                        d_date = datetime.datetime.fromisoformat(str(item["deadline_date"]))
+                        d_date = ensure_utc(d_date)
+                    except Exception:
+                        d_date = None
+
                 deps = item.get("dependencies") or []
                 if isinstance(deps, str):
                     deps = [d.strip() for d in deps.split(",") if d.strip()]
@@ -132,6 +205,8 @@ class CriticalChainEngine:
                     name=tname,
                     duration_days=dur,
                     deadline_days=dl,
+                    start_date=s_date,
+                    deadline_date=d_date,
                     dependencies=[str(d) for d in deps],
                     resources={str(k): float(v) for k, v in res.items() if isinstance(v, (int, float))},
                     risk_driver=item.get("risk_driver"),
@@ -146,7 +221,7 @@ class CriticalChainEngine:
             seen_ids.add(t.task_id)
             sanitized.append(t)
 
-        # Drop any dependencies referencing non-existent tasks to maintain DAG integrity
+        # Drop non-existent or self dependencies
         for t in sanitized:
             valid_deps = [d for d in t.dependencies if d in seen_ids and d != t.task_id]
             if len(valid_deps) != len(t.dependencies):
@@ -159,10 +234,11 @@ class CriticalChainEngine:
     def compute_schedule(
         self, 
         tasks: List[TaskNode], 
-        target_completion_days: Optional[float] = None
+        target_completion_days: Optional[float] = None,
+        base_start_date: Optional[datetime.datetime] = None
     ) -> Dict[str, Any]:
         """
-        Computes forward pass, backward pass, float/buffers, and edge cases in O(V + E) time.
+        Computes forward pass, backward pass, float/buffers, and calendar metrics in O(V + E) time.
         """
         if not tasks:
             return {
@@ -179,7 +255,6 @@ class CriticalChainEngine:
 
         task_map = {t.task_id: t for t in tasks}
         
-        # Build adjacency graph: predecessors and successors
         preds: Dict[str, List[str]] = {t.task_id: list(t.dependencies) for t in tasks}
         succs: Dict[str, List[str]] = {t.task_id: [] for t in tasks}
         in_degree: Dict[str, int] = {t.task_id: len(t.dependencies) for t in tasks}
@@ -200,16 +275,14 @@ class CriticalChainEngine:
                 if in_degree[child] == 0:
                     queue.append(child)
 
-        # Cycle detection check
+        # Cycle detection & graceful fallback
         if len(topo_order) < len(tasks):
             logger.warning(
                 "Cycle detected in project task graph! %d tasks unvisited. Falling back to linear sequence.",
                 len(tasks) - len(topo_order)
             )
-            # Safe linear recovery fallback
             unvisited = [t.task_id for t in tasks if t.task_id not in set(topo_order)]
             topo_order.extend(unvisited)
-            # Break cycle dependencies
             for uid in unvisited:
                 preds[uid] = []
 
@@ -225,11 +298,13 @@ class CriticalChainEngine:
         project_finish = max((node.earliest_finish for node in tasks), default=0.0)
         effective_target = target_completion_days if target_completion_days is not None else project_finish
 
+        # Project reference date in UTC
+        ref_start_utc = ensure_utc(base_start_date) or datetime.datetime.now(datetime.timezone.utc)
+
         # 3. Backward Pass: Latest Finish (LF) and Latest Start (LS)
         for tid in reversed(topo_order):
             node = task_map[tid]
             if not succs[tid]:
-                # Terminal task: finish at effective target or task's deadline
                 base_lf = effective_target
                 if node.deadline_days is not None:
                     base_lf = min(base_lf, node.deadline_days)
@@ -242,7 +317,7 @@ class CriticalChainEngine:
                 
             node.latest_start = node.latest_finish - node.duration_days
 
-        # 4. Buffer / Slack Calculation & Edge Case Auditing
+        # 4. Buffer / Slack Calculation & UTC Calendar Projections
         critical_path_tasks: List[str] = []
         negative_buffer_tasks: List[str] = []
         cascading_tasks: List[str] = []
@@ -258,22 +333,34 @@ class CriticalChainEngine:
             else:
                 node.free_slack = max(0.0, effective_target - node.earliest_finish)
 
+            # UTC Calendar Projections
+            node_base_start = node.start_date or ref_start_utc
+            node.earliest_start_date = add_days_utc(node_base_start, node.earliest_start)
+            node.earliest_finish_date = add_days_utc(node_base_start, node.earliest_finish)
+            node.latest_start_date = add_days_utc(node_base_start, node.latest_start)
+            node.latest_finish_date = add_days_utc(node_base_start, node.latest_finish)
+
+            # Check concrete deadline_date calendar buffer if specified
+            if node.deadline_date:
+                cal_diff = date_diff_days_utc(node.earliest_finish_date, node.deadline_date)
+                node.calendar_buffer_days = cal_diff
+                if cal_diff < -1e-4:
+                    node.has_negative_buffer = True
+
             # Critical Path: slack <= 0.0 (within numerical epsilon)
             if node.slack <= 1e-4:
                 node.is_critical = True
                 critical_path_tasks.append(tid)
 
-            # Negative Buffer: deadline violated or target unachievable
-            if node.slack < -1e-4:
+            # Negative Buffer check
+            if node.slack < -1e-4 or (node.calendar_buffer_days is not None and node.calendar_buffer_days < -1e-4):
                 node.has_negative_buffer = True
-                negative_buffer_tasks.append(tid)
+                if tid not in negative_buffer_tasks:
+                    negative_buffer_tasks.append(tid)
 
             # Cascading Dependency Calculation
-            # If node slips by its duration or 30 days, compute downstream ripple
             ripple = 0.0
             for child_id in succs[tid]:
-                child_node = task_map[child_id]
-                # Downstream ripple occurs if child has 0 or minimal free slack
                 downstream_delay = max(0.0, node.duration_days - max(0.0, node.free_slack))
                 ripple += downstream_delay
             node.cascading_impact_days = ripple
@@ -281,7 +368,6 @@ class CriticalChainEngine:
                 cascading_tasks.append(tid)
 
         # 5. Resource Saturation Detection
-        # Check active tasks across discrete time intervals
         resource_bottlenecks: Dict[str, Dict[str, Any]] = {}
         if tasks:
             time_checkpoints = sorted(list(set(
@@ -293,7 +379,6 @@ class CriticalChainEngine:
                 t_mid = (time_checkpoints[i] + time_checkpoints[i+1]) / 2.0
                 active_nodes = [n for n in tasks if n.earliest_start <= t_mid < n.earliest_finish]
                 
-                # Sum resource requirements
                 res_usage: Dict[str, float] = {}
                 for an in active_nodes:
                     for r_name, r_amt in an.resources.items():
@@ -332,12 +417,14 @@ class CriticalChainEngine:
             "negative_buffer_tasks": negative_buffer_tasks,
             "cascading_tasks": cascading_tasks,
             "resource_bottlenecks": resource_bottlenecks,
-            "is_zero_delay_state": is_zero_delay_state
+            "is_zero_delay_state": is_zero_delay_state,
+            "project_start_date_utc": ref_start_utc.isoformat(),
+            "project_finish_date_utc": add_days_utc(ref_start_utc, project_finish).isoformat()
         }
 
 
 # =====================================================================
-# 3. STATUTORY INFRASTRUCTURE MILESTONE NETWORK TEMPLATE
+# 4. STATUTORY INFRASTRUCTURE MILESTONE NETWORK TEMPLATE
 # =====================================================================
 
 def get_default_infrastructure_schedule(
@@ -359,9 +446,7 @@ def get_default_infrastructure_schedule(
     Dynamically adjusts durations and resource demands from risk parameters.
     """
     meta = project_metadata or {}
-    drivers = dict(risk_drivers or [])
 
-    # Base statutory durations in days
     d_demarcation = 30.0
     d_sia_survey = 60.0
     d_sia_approval = 45.0
@@ -373,7 +458,6 @@ def get_default_infrastructure_schedule(
     d_disbursement = 60.0
     d_possession = 30.0
 
-    # Dynamic adjustments based on project state & SHAP drivers
     sia_stat = str(meta.get("sia_approval_status", "Approved")).strip().lower()
     if sia_stat in ["pending", "in review", "rejected"]:
         d_sia_approval += 45.0
@@ -400,7 +484,6 @@ def get_default_infrastructure_schedule(
 
     sec11_days = float(meta.get("section_11_notification_days", 30.0))
     if sec11_days > 180.0:
-        # Imminent LARR 1-year lapse risk; compress subsequent steps
         d_sec19 = max(15.0, d_sec19 - 15.0)
 
     tasks: List[TaskNode] = [
@@ -497,7 +580,7 @@ def get_default_infrastructure_schedule(
 
 
 # =====================================================================
-# 4. RECOMMENDATION ENGINE IMPLEMENTATION
+# 5. RECOMMENDATION ENGINE IMPLEMENTATION
 # =====================================================================
 
 class RecommendationEngine:
@@ -609,7 +692,6 @@ class RecommendationEngine:
 
         # 2. Critical Chain Schedule Engine: Delay-Prevention Mitigations
         try:
-            # Check if custom schedule tasks were supplied
             raw_tasks = meta.get("schedule_tasks")
             if raw_tasks and isinstance(raw_tasks, list):
                 sanitized_tasks = self.schedule_engine.validate_and_sanitize(raw_tasks)
@@ -623,9 +705,17 @@ class RecommendationEngine:
                 except (ValueError, TypeError):
                     target_completion = None
 
+            base_start = meta.get("project_start_date")
+            if base_start and isinstance(base_start, str):
+                try:
+                    base_start = datetime.datetime.fromisoformat(base_start)
+                except Exception:
+                    base_start = None
+
             schedule_result = self.schedule_engine.compute_schedule(
                 sanitized_tasks, 
-                target_completion_days=target_completion
+                target_completion_days=target_completion,
+                base_start_date=base_start
             )
 
             schedule_mitigations = self._generate_schedule_mitigations(
@@ -735,7 +825,7 @@ class RecommendationEngine:
         for cid in cascading_ids:
             node = tasks.get(cid)
             if not node or node.has_negative_buffer:
-                continue  # Avoid duplicate reporting
+                continue
             if node.cascading_impact_days >= 20.0:
                 mitigations.append({
                     "recommendation_id": f"sched_cascading_{cid}",
@@ -855,7 +945,7 @@ class RecommendationEngine:
 
 
 # =====================================================================
-# 5. ROI & FINANCIAL DELAY MITIGATION EVALUATION
+# 6. ROI & FINANCIAL DELAY MITIGATION EVALUATION
 # =====================================================================
 
 def get_dynamic_implementation_cost(template_key: str, project_cost: float) -> float:
@@ -904,9 +994,8 @@ def calculate_roi_for_recommendation(
             importance = float(recommendation.get('importance', 0.5))
             estimated_delay_days_saved = importance * 0.3 * 180.0
     else:
-        # Check if zero-delay state recommendation
         if recommendation.get("is_zero_delay_state", False):
-            estimated_delay_days_saved = 5.0  # Buffer preservation baseline
+            estimated_delay_days_saved = 5.0
         else:
             importance = float(recommendation.get('importance', 0.5))
             estimated_delay_days_saved = max(2.0, importance * 0.3 * 180.0)
@@ -929,3 +1018,100 @@ def calculate_roi_for_recommendation(
         'roi_percentage': round(roi_percentage, 1),
         'payback_period_days': round(impl_cost / (cost_savings / 180.0), 1) if cost_savings > 0 else 0.0
     }
+
+
+# =====================================================================
+# 7. DELAY-PREVENTION ENGINE API FACADES
+# =====================================================================
+
+class ScheduleEngine:
+    """
+    Standardized Schedule Engine facade providing topological sort,
+    strict cycle detection, and Critical Path/Buffer calculations.
+    """
+    def __init__(
+        self, 
+        tasks: List[TaskNode], 
+        target_completion_days: Optional[float] = None, 
+        resource_capacities: Optional[Dict[str, float]] = None
+    ):
+        self.engine = CriticalChainEngine(resource_capacities=resource_capacities)
+        self.tasks = self.engine.validate_and_sanitize(tasks)
+        self.target_completion_days = target_completion_days
+
+    def topological_sort(self) -> List[TaskNode]:
+        task_map = {t.task_id: t for t in self.tasks}
+        preds = {t.task_id: list(t.dependencies) for t in self.tasks}
+        succs = {t.task_id: [] for t in self.tasks}
+        in_degree = {t.task_id: len(t.dependencies) for t in self.tasks}
+        for t in self.tasks:
+            for parent_id in t.dependencies:
+                succs[parent_id].append(t.task_id)
+
+        queue = deque([t.task_id for t in self.tasks if in_degree[t.task_id] == 0])
+        topo_order: List[TaskNode] = []
+        while queue:
+            curr = queue.popleft()
+            topo_order.append(task_map[curr])
+            for child in succs[curr]:
+                in_degree[child] -= 1
+                if in_degree[child] == 0:
+                    queue.append(child)
+
+        if len(topo_order) < len(self.tasks):
+            raise ValueError(f"Circular dependency detected in tasks! Visited {len(topo_order)} of {len(self.tasks)}")
+
+        return topo_order
+
+    def calculate_schedule(self, base_start_date: Optional[datetime.datetime] = None) -> Dict[str, Any]:
+        return self.engine.compute_schedule(
+            self.tasks,
+            target_completion_days=self.target_completion_days,
+            base_start_date=base_start_date
+        )
+
+
+CriticalPathAnalyzer = ScheduleEngine
+
+
+class MitigationEngine:
+    """
+    Deterministic mitigation generator and ranker based on schedule analysis.
+    """
+    @staticmethod
+    def generate_mitigation_actions(
+        schedule_analysis: Dict[str, Any], 
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        rec_engine = RecommendationEngine()
+        actions = rec_engine._generate_schedule_mitigations(
+            schedule_analysis, 
+            project_metadata=metadata or {}
+        )
+        
+        # Deduplicate and sort deterministically by severity
+        priority_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+        actions.sort(
+            key=lambda x: (
+                priority_rank.get(x.get("priority", "Medium"), 4),
+                -float(x.get("importance", 0.5)),
+                x.get("issue", "")
+            )
+        )
+        return actions
+
+
+def generate_delay_mitigation_plan(
+    tasks: List[TaskNode], 
+    target_days: Optional[float] = None, 
+    metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Generates complete delay mitigation plan from task milestones."""
+    sched_engine = ScheduleEngine(tasks, target_completion_days=target_days)
+    analysis = sched_engine.calculate_schedule()
+    mitigations = MitigationEngine.generate_mitigation_actions(analysis, metadata=metadata)
+    return {
+        "schedule_analysis": analysis,
+        "mitigations": mitigations
+    }
+

@@ -7,6 +7,7 @@ import pandas as pd
 import logging
 import json
 from typing import Optional, List, Dict, Any
+from starlette.concurrency import run_in_threadpool
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -15,6 +16,7 @@ from slowapi.errors import RateLimitExceeded
 from risk_analysis_system import RiskAnalysisSystem
 from monitor import ModelMonitor
 from recommendation_engine import calculate_roi_for_recommendation
+from ai_advisor import AIAdvisor, PromptSecurityValidator, DomainGroundingValidator, IndianContextNormalizer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -66,6 +68,11 @@ class ProjectPayload(BaseModel):
     schedule_tasks: Optional[List[Dict[str, Any]]] = None
     target_completion_days: Optional[float] = None
 
+class AIAdvisoryRequest(BaseModel):
+    query: str
+    context: Optional[str] = None
+    project_metadata: Optional[Dict[str, Any]] = None
+
 # Global variables
 system: RiskAnalysisSystem = None
 monitor: ModelMonitor = None
@@ -104,11 +111,26 @@ def serve_home():
         return FileResponse("dashboard/index.html")
     return RedirectResponse(url="/docs")
 
+@app.post("/ai/advisory")
+@limiter.limit("20/minute")
+async def get_ai_advisory(request: Request, req: AIAdvisoryRequest, api_key: str = Security(get_api_key)):
+    advisor = AIAdvisor()
+    res = await run_in_threadpool(advisor.generate_advisory, req.query, req.context, req.project_metadata)
+    return res
+
 @app.post("/predict")
 @limiter.limit("10/minute")
 async def predict_risk(request: Request, payload: ProjectPayload, api_key: str = Security(get_api_key)):
     if not system:
         raise HTTPException(status_code=500, detail="Models not loaded")
+
+    # Security validation on free text / identifiers
+    security_validator = PromptSecurityValidator()
+    for field_val in [payload.project_id, payload.district]:
+        if field_val:
+            is_inj, reason = security_validator.detect_injection(str(field_val))
+            if is_inj:
+                raise HTTPException(status_code=400, detail=f"Security rejection: {reason}")
 
     payload_dict = payload.model_dump(exclude_unset=True) if hasattr(payload, 'model_dump') else payload.dict(exclude_unset=True)
     # Remove schedule-specific metadata fields so they don't pollute the ML feature dataframe
@@ -141,7 +163,8 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
     }
 
     try:
-        result = system.predict(raw_payload, metadata=metadata)
+        # Non-blocking threadpool offloading to preserve event loop concurrency
+        result = await run_in_threadpool(system.predict, raw_payload, metadata=metadata)
         
         # Prescriptive Actions & Dynamic ROI Calculations
         raw_recs = result.get('recommendations', [])
