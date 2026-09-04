@@ -157,4 +157,143 @@ Programmatic system telemetry captured at test runtime:
 
 1. **CatBoost Multithreading Overhead:** In certain virtualized CI containers, CatBoost TreeExplainer calculation incurs high thread-spawning overhead. In latency-critical deployments, limit CatBoost thread count (`thread_count=1`) during explanation passes.
 2. **Background Dataset Selection:** Currently, a 100-row uniform random subsample of `indian_infrastructure_projects_dataset.csv` serves as the reference background. For production, consider using k-means clustering or medoid sampling to select representative background prototypes.
-3. **Async / Background Explanation Workers:** While single-instance explanation easily satisfies the 500 ms SLA ($\sim 307\text{ ms}$ P50), large batch requests ($N > 50$) scale linearly ($\sim 1.5\text{ s}$ per 50 rows). Batch explanations in `api.py` should be delegated to background Celery/Redis tasks or streaming endpoints.
+3. **Async / Background Explanation Workers:** While single-instance explanation easily satisfies the 500 ms SLA ($\sim 24\text{ ms}$ P50), large batch requests ($N > 50$) scale linearly ($\sim 1.2\text{ s}$ per 50 rows). Batch explanations in `api.py` should be delegated to background Celery/Redis tasks or streaming endpoints.
+
+---
+
+## 7. Deep Faithfulness Audit & Structural Coverage Gaps
+
+This section evaluates whether the explanations produced by `DualParadigmExplainer` are **genuinely faithful** to the underlying predictive models — whether the features named as "risk drivers" actually move the model's predictions, or are simply plausible labels attached to normalized scores. All metrics below were computed programmatically via [`audit_faithfulness.py`](file:///c:/Users/usmed/Desktop/V1/audit_faithfulness.py) and permanently logged in [`faithfulness_audit_results.json`](file:///c:/Users/usmed/Desktop/V1/faithfulness_audit_results.json).
+
+### 7.1 The Timeline / Survival Model Has Zero Explainability Coverage
+
+#### Empirical Call-Site Trace
+An exhaustive trace of all `NonLinearTimelinePredictor` call sites confirmed that the timeline/survival model has **zero explainability coverage** anywhere in the codebase:
+- `risk_analysis_system.py`: Calls `timeline_predictor.get_dynamic_risk_threshold(X_proc)` to surface `predicted_delay_days`, `delay_days`, `median_survival_days`, and `risk_phase`. The explainer (`DualParadigmExplainer`) is initialized **only** around `self.hybrid_model` (`HybridRiskPredictor`).
+- `dashboard.py` (line 280): Displays `p['predicted_delay_days']` to the user with no explanatory attribution.
+- `interactive_test.py` (line 63) & `recommendation_engine.py` (lines 223–226): Rely on `predicted_delay_days` to calculate delay days saved with zero feature-level rationale.
+
+#### Architectural Reason & Technical Feasibility Check
+Why does timeline explainability not exist?
+1. **TreeSHAP Incompatibility:** The timeline model's primary component is `sksurv.ensemble.forest.RandomSurvivalForest`. Passing `tl.rsf` into `shap.TreeExplainer` actively throws:
+   ```python
+   shap.utils._exceptions.InvalidModelError: Model type not yet supported by TreeExplainer: <class 'sksurv.ensemble.forest.RandomSurvivalForest'>
+   ```
+   Survival trees in `sksurv` predict cumulative hazard step functions rather than scalar margins, making them incompatible with standard TreeSHAP C++ split traversal.
+2. **Missing Feature Importances:** Calling `tl.rsf.feature_importances_` raises:
+   ```python
+   NotImplementedError
+   ```
+3. **DeepSurv Component:** `timeline.deepsurv` is a custom PyTorch multi-layer perceptron predicting log hazard ratio, with no gradient-based or integrated gradient attribution hooks implemented.
+
+> **Audit Determination:** The absence of timeline explainability is an **architectural descoping** driven by upstream library limitations (`sksurv` lack of TreeSHAP and native feature importances). However, leaving users with a concrete `predicted_delay_days` figure and zero explanation is a user-facing blind spot. To close this gap in future revisions, global permutation importance on Uno's C-index should be implemented for `RandomSurvivalForest`.
+
+---
+
+### 7.2 Deletion / Insertion Faithfulness Test ($N = 50$ Projects, 150 Drivers)
+
+To test whether the explainer's identified risk drivers actually govern the model's decisions, a 50-row deletion and insertion test was executed against `ensemble.joblib`:
+- **Deletion Test:** For each row, the #1 identified risk driver was substituted with its neutral background reference value (median from the reference background dataset). The resulting change in prediction $\Delta \text{prob} = \text{prob}_{\text{base}} - \text{prob}_{\text{deleted}}$ was measured.
+- **Insertion / Directional Check:** Verified whether removing an `"increases_delay"` driver actually lowered the predicted risk, and whether removing a `"decreases_delay"` driver raised it.
+- **Rank Correlation:** Computed the Spearman rank correlation between the explainer's claimed `impact_score` and the measured $|\Delta \text{delay\_probability}|$.
+
+#### Empirical Faithfulness Summary
+
+| Metric | Measured Value | Expected / Benchmark | Finding |
+| :--- | :---: | :---: | :--- |
+| **Top-1 Driver Spearman $\rho$** | **$\text{NaN}$ (Constant Input)** | $\rho \ge 0.50$ | **CRITICAL:** Claimed score is normalized to $1.0000$ for all rows. |
+| **Top-3 All Drivers Spearman $\rho$ ($N = 150$)** | **$0.1494$ ($p = 0.0680$)** | $\rho \ge 0.50$ | **CRITICAL GAP:** Near-zero correlation with actual model sensitivity. |
+| **Top-1 Directional Fidelity** | **$22.0\%$** (11 of 50 correct) | $\ge 80.0\%$ | **CRITICAL GAP:** $78\%$ of top drivers have inverted direction labels. |
+| **All Drivers Directional Fidelity** | **$27.3\%$** (41 of 150 correct) | $\ge 80.0\%$ | **CRITICAL GAP:** Explainer directions disagree with ensemble predictions. |
+| **Mean $|\Delta \text{prob}|$ on #1 Deletion** | **$0.0401$** ($4.01\%$) | $> 0.10$ | Small overall model impact. |
+| **Median $|\Delta \text{prob}|$ on #1 Deletion** | **$0.0000$** ($0.00\%$) | $> 0.10$ | **$52\%$ of rows produced exact $0.0000$ probability delta.** |
+
+#### Root Cause Analysis: Why Explanations Diverge from the Ensemble
+Investigation of the production model weights (`ensemble.joblib`) uncovered the exact mathematical reason for this divergence:
+1. **Meta-Learner Weight Disconnect:** `HybridRiskPredictor` uses a `StackingClassifier` whose meta-learner logistic regression has fitted coefficients:
+   ```python
+   {'lgb': -0.5647, 'xgb': -0.5647, 'cat': +0.9234, 'et': +2.2306}
+   ```
+2. **ExtraTrees Was Completely Excluded from Explanations:** `DualParadigmExplainer._extract_models()` only extracted `['lgb', 'xgb', 'cat']`. It completely ignored `et` (`ExtraTreesClassifier`), which holds **$+2.2306$ coefficient weight** (over $50\%$ of the ensemble's total predictive power).
+3. **Negative Weight on XGBoost:** The meta-learner assigns `xgb` a **negative coefficient** ($-0.5647$). But `DualParadigmExplainer` averaged `xgb`'s TreeSHAP with an **unweighted positive sign**! Consequently, a feature that increases risk in XGBoost actually **decreases** risk in the stacked ensemble.
+4. **Dead LightGBM Estimator:** `lgb` in `ensemble.joblib` has all-zero feature importances (`[0, 0, ...]`), contributing nothing to TreeSHAP.
+5. **Why `population_density` Was Over-Reported:** In XGBoost, `population_density` had large raw TreeSHAP ($-0.73$). Because the explainer only averaged `xgb` and `cat` unweighted, `population_density` was selected as the #1 driver for **$100\%$ of all 50 evaluation rows**, even though ExtraTrees (the dominant model) relied primarily on `terrain_type`, `forest_clearance_status`, and `P_r`. When `population_density` was deleted, the actual ensemble output barely moved ($|\Delta \text{prob}| = 0$ for $52\%$ of rows).
+
+#### 10-Row Sample Telemetry (Full 50 Rows in `faithfulness_audit_results.json`)
+
+| Row | Baseline Prob | Top Driver Feature | Claimed Impact | Claimed Direction | Post-Deletion Prob | $|\Delta \text{prob}|$ | Direction Faithful? |
+| :---: | :---: | :--- | :---: | :---: | :---: | :---: | :---: |
+| **0** | 0.3802 | `population_density` | 1.0000 | `decreases_delay` | 0.3750 | 0.0052 | **NO** (Prob decreased) |
+| **1** | 0.8333 | `population_density` | 1.0000 | `decreases_delay` | 0.8333 | 0.0000 | **NO** (Zero movement) |
+| **2** | 0.8333 | `population_density` | 1.0000 | `decreases_delay` | 0.8333 | 0.0000 | **NO** (Zero movement) |
+| **3** | 0.8333 | `population_density` | 1.0000 | `decreases_delay` | 0.8333 | 0.0000 | **NO** (Zero movement) |
+| **4** | 0.8333 | `population_density` | 1.0000 | `decreases_delay` | 0.8333 | 0.0000 | **NO** (Zero movement) |
+| **5** | 0.3542 | `population_density` | 1.0000 | `decreases_delay` | 0.3646 | 0.0105 | **YES** (Prob increased) |
+| **6** | 0.8333 | `population_density` | 1.0000 | `decreases_delay` | 0.8333 | 0.0000 | **NO** (Zero movement) |
+| **7** | 0.8333 | `population_density` | 1.0000 | `decreases_delay` | 0.8333 | 0.0000 | **NO** (Zero movement) |
+| **8** | 0.3802 | `population_density` | 1.0000 | `decreases_delay` | 0.3688 | 0.0114 | **NO** (Prob decreased) |
+| **9** | 0.5000 | `population_density` | 1.0000 | `decreases_delay` | 0.4662 | 0.0338 | **NO** (Prob decreased) |
+
+---
+
+### 7.3 Attribution Paradigm Balance (Does TabNet Ever Win?)
+
+The `source` field in `risk_drivers` tags whether each driver was attributed to `"TreeSHAP"`, `"TabNet_Attention"`, or `"Fallback_Heuristic"` based on `shap_score >= attn_score`.
+
+Across all 250 driver attributions ($50\text{ rows} \times 5\text{ drivers}$):
+
+| Attribution Source | Tally (Count) | Win-Rate Percentage | Status |
+| :--- | :---: | :---: | :---: |
+| **TreeSHAP** | **250** | **100.0%** | **DOMINANT** |
+| **TabNet_Attention** | **0** | **0.0%** | **INACTIVE** |
+| **Fallback_Heuristic** | **0** | **0.0%** | Inactive during normal execution |
+
+#### Root Cause
+Inspection of `ensemble.joblib` confirmed that the underlying StackingClassifier contains only `['lgb', 'xgb', 'cat', 'et']`. TabNet was **not included in the trained ensemble estimators**. Consequently:
+- `explainer.tabnet_model` evaluates to `None`.
+- `sample_attn` is permanently a zero-vector.
+- `shap_score >= attn_score` is trivially `True` for every feature.
+- **Finding:** The "Dual-Paradigm" neural attention mechanism is completely inactive in production. The engine functions solely as a TreeSHAP explainer.
+
+---
+
+### 7.4 Global Importance Stability Across Independent Background Draws
+
+`DualParadigmExplainer.set_background_data()` automatically subsamples 100 rows to maintain responsive latency.
+- **Seeding Check:** Code inspection confirms `set_background_data()` uses `sample(n=100, random_state=42)` (intentionally deterministic).
+- **Independent Sample Stability Test:** To evaluate sensitivity to the background draw, two completely independent 100-row samples were drawn from `indian_infrastructure_projects_dataset.csv` (Seed 101 vs Seed 202):
+
+| Metric | Measured Value | Threshold | Finding |
+| :--- | :---: | :---: | :--- |
+| **Spearman Rank Correlation ($\rho$)** | **$0.9962$** ($p = 4.765 \times 10^{-29}$) | $\rho \ge 0.80$ | **EXCEPTIONAL STABILITY** |
+| **Top-10 Jaccard Similarity** | **$1.0000$** ($10 / 10$ shared features) | $J \ge 0.70$ | **PERFECT OVERLAP** |
+
+**Identical Top-10 Features Across Both Independent Draws:**
+`population_density`, `terrain_type`, `forest_clearance_status`, `compensation_multiplier_demand`, `H_r`, `state_project_type`, `project_age_years`, `project_start_year`, `P_r`, `local_protest_flag`.
+
+> **Conclusion:** The global importance ranking does **not** fluctuate when different 100-row slices of the dataset are drawn. It provides an exceptionally reliable macro-level representation of dataset risk factors.
+
+---
+
+### 7.5 Explanation Quality Under Forced Fallback
+
+When tree explainers fail or are unlinked (`tree_models = {}`), `DualParadigmExplainer` engages `Fallback_Heuristic`. Testing the fallback path on the standardized High-Risk and Low-Risk payloads revealed:
+
+| Aspect | Normal TreeSHAP Path | Forced Fallback Path (`Fallback_Heuristic`) |
+| :--- | :--- | :--- |
+| **High-Risk Top Drivers** | `population_density`, `terrain_type`, `H_r` | `state_project_type`, `financial_burn_rate_to_date`, `population_density` |
+| **High-Risk Impact Scores** | $1.0000$, $0.2254$, $0.2110$ | **$0.0000$, $0.0000$, $0.0000$ (All zero)** |
+| **High-Risk Direction** | `increases_delay` for high-risk hazards | **`decreases_delay` (Direction Inverted)** |
+| **Low-Risk Direction** | `decreases_delay` | **`decreases_delay`** |
+
+#### Why the Fallback Path Degrades:
+1. In `explainer.py:L354`, fallback initializes `ensemble_shap = np.zeros((N, F))`.
+2. In `explainer.py:L432`, driver direction is computed as:
+   ```python
+   direction = "increases_delay" if sample_shap[idx] > 0 else "decreases_delay"
+   ```
+   Since `sample_shap` is identically zero, `sample_shap[idx] > 0` is always `False`. As a result, **every driver in the fallback path is labeled `"decreases_delay"`**, even for projects with critical disputes and high delay probability.
+3. Feature rankings collapse to the initial column index order with zero impact score.
+
+> **Audit Recommendation:** While the fallback path successfully satisfies schema validation and prevents API crashes, its content is functionally degraded. It should be documented as a fail-safe degraded mode, and `direction` should be inferred from raw feature deviation relative to background median when SHAP is unavailable.
+
