@@ -70,7 +70,7 @@ try:
     
     if len(valid_horizons) > 0:
         surv_funcs = timeline.rsf.predict_survival_function(X_tf)
-        surv_probs = np.row_stack([fn(valid_horizons) for fn in surv_funcs])
+        surv_probs = np.vstack([fn(valid_horizons) for fn in surv_funcs])
         ibs = integrated_brier_score(y_surv, y_surv, surv_probs, valid_horizons)
         print('Integrated Brier Score:', ibs)
     else:
