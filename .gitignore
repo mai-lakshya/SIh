@@ -48,3 +48,9 @@ node_modules/
 Thumbs.db
 desktop.ini
 sih_codebase.txt
+
+# Export Staging & Bundles
+export/
+*.zip
+updated_files.zip
+
