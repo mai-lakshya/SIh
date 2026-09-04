@@ -20,3 +20,9 @@ catboost_info/
 # Jupyter checkpoints
 .ipynb_checkpoints/
 *-checkpoint.ipynb
+node_modules/
+.env
+__pycache__/
+*.pyc
+.DS_Store
+.git/
