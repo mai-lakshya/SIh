@@ -41,11 +41,18 @@ Ensure you have Python 3.10+ installed.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/predictive-risk-engine.git
-cd predictive-risk-engine
+git clone https://github.com/mai-lakshya/SIh.git
+cd SIh
 
-# Install strictly pinned dependencies
+# Step 1: Install CPU-only PyTorch (CPU Wheels)
+# Prevents downloading >1.5GB of unnecessary CUDA/cuDNN/Triton binaries on machines without a dedicated GPU
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Step 2: Install remaining pinned dependencies
 pip install -r requirements.txt
+
+# Alternatively, install all dependencies in a single step using the CPU profile:
+# pip install -r requirements-cpu.txt
 ```
 
 ## Running the Pipeline

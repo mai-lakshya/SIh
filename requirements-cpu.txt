@@ -1,0 +1,5 @@
+# CPU-Optimized Requirements
+# Pinned to the official PyTorch CPU wheel index to prevent downloading heavy CUDA/cuDNN/Triton binaries (>1.5GB)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.1.0
+-r requirements.txt
