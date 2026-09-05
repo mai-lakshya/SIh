@@ -34,5 +34,6 @@ pymysql>=1.1.0
 # --- API & Serving ---
 fastapi>=0.104.0
 httpx>=0.25.0
+slowapi>=0.1.9
 uvicorn>=0.24.0
 pydantic>=2.5.0

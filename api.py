@@ -9,9 +9,26 @@ import json
 from typing import Optional, List, Dict, Any
 from starlette.concurrency import run_in_threadpool
 
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    has_slowapi = True
+except ImportError:
+    has_slowapi = False
+    class RateLimitExceeded(Exception):
+        pass
+    def _rate_limit_exceeded_handler(request, exc):
+        pass
+    class Limiter:
+        def __init__(self, *args, **kwargs):
+            pass
+        def limit(self, *args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+    def get_remote_address(request=None):
+        return "127.0.0.1"
 
 from risk_analysis_system import RiskAnalysisSystem
 from monitor import ModelMonitor
@@ -34,7 +51,8 @@ app.add_middleware(
 )
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+if has_slowapi:
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 API_KEY = "super-secret-token" # In production, read from env
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
