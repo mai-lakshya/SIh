@@ -25,7 +25,7 @@ def test_objective_function(sample_evaluation_data):
     
     trial = MockTrial({'use_smote': False})
     
-    recall, ece, mae = objective(trial, X, y_cls, y_crs, y_days)
+    recall, ece, mae = objective(trial, X, y_cls, y_crs, y_days, quick_check=True)
     
     assert np.isfinite(recall)
     assert np.isfinite(ece)

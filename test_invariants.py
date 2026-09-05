@@ -7,7 +7,7 @@ from pipeline import get_preprocessing_pipeline
 from hybrid_model import HybridRiskPredictor
 from explainer import DualParadigmExplainer
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_trained_system():
     """
     Creates a small trained pipeline and model to test invariants.
