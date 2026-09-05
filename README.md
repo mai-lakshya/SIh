@@ -44,6 +44,10 @@ Ensure you have Python 3.10+ installed.
 git clone https://github.com/mai-lakshya/SIh.git
 cd SIh
 
+# Git LFS: Pull serialized model artifacts (or retrain locally via python retrain_all.py)
+git lfs install
+git lfs pull
+
 # Step 1: Install CPU-only PyTorch (CPU Wheels)
 # Prevents downloading >1.5GB of unnecessary CUDA/cuDNN/Triton binaries on machines without a dedicated GPU
 pip install torch --index-url https://download.pytorch.org/whl/cpu

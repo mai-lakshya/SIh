@@ -87,10 +87,11 @@ class TreeWrapperRegressor(RegressorMixin, TreeWrapperBase):
         super().__init__(model_class, random_state, **kwargs)
 
 class HybridRiskPredictor:
-    def __init__(self, cat_features=None, random_state=42, model_params=None):
+    def __init__(self, cat_features=None, random_state=42, model_params=None, calibration_method='sigmoid'):
         self.cat_features = cat_features
         self.random_state = random_state
         self.model_params = model_params or {}
+        self.calibration_method = calibration_method
         self.classifier = None
         self.calibrated_classifier = None
         self.regressor_crs = None
@@ -121,7 +122,25 @@ class HybridRiskPredictor:
         
         meta_classifier = Pipeline([
             ('logit', FunctionTransformer(safe_logit)),
-            ('lr', LogisticRegressionCV(class_weight='balanced', max_iter=2000, cv=cv, random_state=self.random_state))
+            ('lr', LogisticRegressionCV(
+                class_weight='balanced',
+                max_iter=2000,
+                cv=cv,
+                random_state=self.random_state,
+                # Pinned under scikit-learn 1.9.0: set to (0.0,) representing pure L2 penalty.
+                # Replaces deprecated None to eliminate FutureWarning and ensure full forward-compatibility with 1.10+.
+                l1_ratios=(0.0,),
+                # Pinned under scikit-learn 1.9.0: default is 'accuracy'.
+                # The default changes to 'neg_log_loss' in version 1.11.
+                scoring='accuracy',
+                # Pinned under scikit-learn 1.9.0: default is True.
+                # The default changes to False in version 1.10.
+                # Preserves current fitted-attribute behavior and attribute shapes.
+                # NOTE: Flipping this to False in the future is a deliberate migration decision
+                # requiring re-validation of validate_additivity() and the faithfulness benchmarks,
+                # not a silent warning-suppression.
+                use_legacy_attributes=True
+            ))
         ])
         
         return StackingClassifier(
@@ -174,9 +193,12 @@ class HybridRiskPredictor:
         cv_splits = min(3, max(2, min_class_count // 3)) if min_class_count >= 4 else 2
 
         self.classifier = self._build_classifiers(cv=cv_splits)
+        cal_method = getattr(self, 'calibration_method', 'sigmoid')
+        if min_class_count < 15 and cal_method == 'isotonic':
+            cal_method = 'sigmoid'
         self.calibrated_classifier = CalibratedClassifierCV(
             estimator=self.classifier,
-            method='isotonic' if min_class_count >= 15 else 'sigmoid',
+            method=cal_method,
             cv=cv_splits
         )
         self.calibrated_classifier.fit(X, y_cls)

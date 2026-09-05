@@ -1,8 +1,13 @@
-import pymysql
+try:
+    import pymysql
+except ImportError:
+    pymysql = None
 import os
 import time
 import datetime
 import json
+import threading
+from contextlib import contextmanager
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Any
@@ -24,7 +29,7 @@ class Alert:
         self.severity = severity
         self.message = message
         self.metrics = metrics
-        self.timestamp = datetime.datetime.now().isoformat()
+        self.timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     def to_dict(self):
         return {
@@ -34,40 +39,89 @@ class Alert:
             "metrics": self.metrics
         }
 
+_GLOBAL_SQLITE_LOCK = threading.RLock()
+
+class SQLiteCursorWrapper:
+    def __init__(self, cur, lock):
+        self.cur = cur
+        self.lock = lock
+
+    def _translate(self, query):
+        return query.replace('%s', '?').replace('INT AUTO_INCREMENT PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT').replace('AUTO_INCREMENT PRIMARY KEY', 'PRIMARY KEY AUTOINCREMENT')
+
+    def execute(self, query, params=None):
+        q = self._translate(query)
+        with self.lock:
+            if params is None:
+                return self.cur.execute(q)
+            return self.cur.execute(q, params)
+
+    def executemany(self, query, seq):
+        q = self._translate(query)
+        with self.lock:
+            return self.cur.executemany(q, seq)
+
+    def fetchone(self):
+        with self.lock:
+            row = self.cur.fetchone()
+            return dict(row) if row else None
+
+    def fetchall(self):
+        with self.lock:
+            rows = self.cur.fetchall()
+            return [dict(r) for r in rows] if rows else []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.cur.close()
+
 class SQLiteConnectionWrapper:
     def __init__(self, db_path='monitoring.db'):
         import sqlite3
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
         self.conn.row_factory = sqlite3.Row
-    def cursor(self):
-        return SQLiteCursorWrapper(self.conn.cursor())
-    def commit(self):
-        self.conn.commit()
-    def close(self):
-        self.conn.close()
 
-class SQLiteCursorWrapper:
-    def __init__(self, cur):
-        self.cur = cur
-    def _translate(self, query):
-        return query.replace('%s', '?').replace('INT AUTO_INCREMENT PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT').replace('AUTO_INCREMENT PRIMARY KEY', 'PRIMARY KEY AUTOINCREMENT')
-    def execute(self, query, params=None):
-        q = self._translate(query)
-        if params is None:
-            return self.cur.execute(q)
-        return self.cur.execute(q, params)
-    def executemany(self, query, seq):
-        q = self._translate(query)
-        return self.cur.executemany(q, seq)
-    def fetchone(self):
-        row = self.cur.fetchone()
-        return dict(row) if row else None
-    def fetchall(self):
-        rows = self.cur.fetchall()
-        return [dict(r) for r in rows] if rows else []
+    def cursor(self):
+        return SQLiteCursorWrapper(self.conn.cursor(), _GLOBAL_SQLITE_LOCK)
+
+    def commit(self):
+        with _GLOBAL_SQLITE_LOCK:
+            self.conn.commit()
+
+    def rollback(self):
+        with _GLOBAL_SQLITE_LOCK:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+    def close(self):
+        with _GLOBAL_SQLITE_LOCK:
+            self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.rollback()
+        self.close()
 
 class ModelMonitor:
     def __init__(self):
+        self.baseline_stats = {}
+        self.prediction_window = []
+        self.alerts = []
+        self.alert_thresholds = {
+            'auc_roc_min': 0.70,
+            'brier_score_max': 0.20,
+            'ece_max': 0.15,
+            'ks_drift_p_min': 0.05,
+            'mae_max': 60.0
+        }
+        self.lock = threading.Lock()
         self.db_host = os.getenv('DB_HOST', 'localhost')
         self.db_user = os.getenv('DB_USER', 'root')
         self.db_password = os.getenv('DB_PASSWORD', 'rootpassword')
@@ -76,7 +130,7 @@ class ModelMonitor:
         self._init_db()
         
     def _get_connection(self):
-        if self.use_sqlite:
+        if self.use_sqlite or pymysql is None:
             return SQLiteConnectionWrapper('monitoring.db')
         return pymysql.connect(
             host=self.db_host,
@@ -86,106 +140,123 @@ class ModelMonitor:
             cursorclass=pymysql.cursors.DictCursor
         )
 
-    def _init_db(self):
-        try:
-            conn = pymysql.connect(host=self.db_host, user=self.db_user, password=self.db_password, connect_timeout=1)
-            cursor = conn.cursor()
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.db_name}")
-            conn.commit()
-            conn.close()
-        except Exception:
-            # Fall back to local SQLite database
-            self.use_sqlite = True
-
+    @contextmanager
+    def get_db_session(self):
+        """
+        Safely manage database connection lifecycles.
+        Guarantees rollback on error and connection closure in finally blocks
+        to eliminate database connection leaks.
+        """
         conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS performance_metrics (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                timestamp VARCHAR(255),
-                roc_auc FLOAT,
-                ece FLOAT,
-                brier FLOAT,
-                mae FLOAT,
-                rmse FLOAT
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS drift_metrics (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                timestamp VARCHAR(255),
-                feature_name VARCHAR(255),
-                psi FLOAT,
-                p_value FLOAT,
-                is_drifted BOOLEAN
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                timestamp VARCHAR(255),
-                severity VARCHAR(50),
-                message TEXT,
-                metrics TEXT
-            )
-        ''')
-        conn.commit()
-        conn.close()
+        try:
+            yield conn
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _init_db(self):
+        if pymysql is None:
+            self.use_sqlite = True
+        else:
+            try:
+                conn = pymysql.connect(host=self.db_host, user=self.db_user, password=self.db_password, connect_timeout=1)
+                cursor = conn.cursor()
+                cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.db_name}")
+                conn.commit()
+                conn.close()
+            except Exception:
+                # Fall back to local SQLite database
+                self.use_sqlite = True
+
+        with self.get_db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS performance_metrics (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    timestamp VARCHAR(255),
+                    roc_auc FLOAT,
+                    ece FLOAT,
+                    brier FLOAT,
+                    mae FLOAT,
+                    rmse FLOAT
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS drift_metrics (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    timestamp VARCHAR(255),
+                    feature_name VARCHAR(255),
+                    psi FLOAT,
+                    p_value FLOAT,
+                    is_drifted BOOLEAN
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    timestamp VARCHAR(255),
+                    severity VARCHAR(50),
+                    message TEXT,
+                    metrics TEXT
+                )
+            ''')
+            conn.commit()
 
     def log_performance(self, metrics: dict):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO performance_metrics (timestamp, roc_auc, ece, brier, mae, rmse)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        ''', (
-            datetime.datetime.now().isoformat(),
-            metrics.get('roc_auc', 0),
-            metrics.get('ece', 0),
-            metrics.get('brier', 0),
-            metrics.get('mae', 0),
-            metrics.get('rmse', 0)
-        ))
-        conn.commit()
-        conn.close()
+        with self.get_db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO performance_metrics (timestamp, roc_auc, ece, brier, mae, rmse)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (
+                datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                metrics.get('roc_auc', 0),
+                metrics.get('ece', 0),
+                metrics.get('brier', 0),
+                metrics.get('mae', 0),
+                metrics.get('rmse', 0)
+            ))
+            conn.commit()
 
     def log_drift(self, drift_results: List[dict]):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        timestamp = datetime.datetime.now().isoformat()
-        
-        for result in drift_results:
-            cursor.execute('''
-                INSERT INTO drift_metrics (timestamp, feature_name, psi, p_value, is_drifted)
-                VALUES (%s, %s, %s, %s, %s)
-            ''', (
-                timestamp,
-                result['feature'],
-                result.get('psi', 0.0),
-                result.get('p_value', 1.0),
-                bool(result.get('is_drifted', False))
-            ))
+        with self.get_db_session() as conn:
+            cursor = conn.cursor()
+            timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
             
-        conn.commit()
-        conn.close()
-        
+            for result in drift_results:
+                cursor.execute('''
+                    INSERT INTO drift_metrics (timestamp, feature_name, psi, p_value, is_drifted)
+                    VALUES (%s, %s, %s, %s, %s)
+                ''', (
+                    timestamp,
+                    result['feature'],
+                    result.get('psi', 0.0),
+                    result.get('p_value', 1.0),
+                    bool(result.get('is_drifted', False))
+                ))
+            conn.commit()
+            
     def log_alert(self, alert: Alert):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO alerts (timestamp, severity, message, metrics)
-            VALUES (%s, %s, %s, %s)
-        ''', (
-            alert.timestamp,
-            alert.severity,
-            alert.message,
-            json.dumps(alert.metrics)
-        ))
-        conn.commit()
-        conn.close()
+        with self.get_db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO alerts (timestamp, severity, message, metrics)
+                VALUES (%s, %s, %s, %s)
+            ''', (
+                alert.timestamp,
+                alert.severity,
+                alert.message,
+                json.dumps(alert.metrics)
+            ))
+            conn.commit()
         # Trigger external systems here (stdout, email, slack)
         print(f"[ALERT - {alert.severity}] {alert.message} | {alert.metrics}")
 
@@ -245,8 +316,8 @@ class ModelMonitor:
             value = (e_perc - a_perc) * np.log(e_perc / a_perc)
             return value
             
-        psi_value = np.sum(sub_psi(expected_percents[i], actual_percents[i]) for i in range(len(expected_percents)))
-        return psi_value
+        psi_value = np.sum([sub_psi(expected_percents[i], actual_percents[i]) for i in range(len(expected_percents))])
+        return float(psi_value)
 
     def detect_data_drift(self, X_new: pd.DataFrame, X_ref: pd.DataFrame, cat_cols=None, cont_cols=None) -> List[dict]:
         """
@@ -309,19 +380,18 @@ class ModelMonitor:
         return results
 
     def get_alert_summary(self, limit=10):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT timestamp, severity, message, metrics FROM alerts ORDER BY id DESC LIMIT %s', (limit,))
-        alerts = cursor.fetchall()
-        conn.close()
-        return [{"timestamp": a['timestamp'], "severity": a['severity'], "message": a['message'], "metrics": json.loads(a['metrics'])} for a in alerts]
+        with self.get_db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT timestamp, severity, message, metrics FROM alerts ORDER BY id DESC LIMIT %s', (limit,))
+            alerts = cursor.fetchall()
+            return [{"timestamp": a['timestamp'], "severity": a['severity'], "message": a['message'], "metrics": json.loads(a['metrics'])} for a in alerts]
 
     def get_latest_performance(self):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT timestamp, roc_auc, ece, brier, mae, rmse FROM performance_metrics ORDER BY id DESC LIMIT 1')
-        res = cursor.fetchone()
-        conn.close()
-        if res:
-            return {"timestamp": res['timestamp'], "roc_auc": res['roc_auc'], "ece": res['ece'], "brier": res['brier'], "mae": res['mae'], "rmse": res['rmse']}
-        return {}
+        with self.get_db_session() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT timestamp, roc_auc, ece, brier, mae, rmse FROM performance_metrics ORDER BY id DESC LIMIT 1')
+            res = cursor.fetchone()
+            if res:
+                return {"timestamp": res['timestamp'], "roc_auc": res['roc_auc'], "ece": res['ece'], "brier": res['brier'], "mae": res['mae'], "rmse": res['rmse']}
+            return {}
+

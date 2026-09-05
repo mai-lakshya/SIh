@@ -1441,7 +1441,7 @@
       renderSurvivalCurve(data.survival_curve || []);
 
       // Prescriptive Recommendations
-      renderRecommendations(data.recommendations || []);
+      renderRecommendations(data.prescriptive_actions || data.recommendations || []);
 
       // Initialize Simulation Defaults
       initSimulationValues(preds);

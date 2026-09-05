@@ -111,6 +111,8 @@ def run_faithfulness_audit():
     # Telemetry for pre-calibration stacker continuous probabilities
     raw_stacker_directional_matches = []
     non_zero_raw_directional_matches = []
+    non_zero_cal_directional_matches = []
+    top1_non_zero_cal_matches = []
 
     for i in range(n_eval):
         row_orig = eval_df.iloc[[i]].copy()
@@ -159,8 +161,16 @@ def run_faithfulness_audit():
                 dir_match = (delta_prob < 0)
                 raw_dir_match = (delta_raw < 0)
 
-            if abs(delta_raw) > 1e-5:
+            is_true_perturbation = abs(orig_val - float(neutral_val)) > 1e-5 or abs(delta_raw) > 1e-5
+            if is_true_perturbation:
                 non_zero_raw_directional_matches.append(raw_dir_match)
+                if 'non_zero_cal_directional_matches' not in locals():
+                    non_zero_cal_directional_matches = []
+                non_zero_cal_directional_matches.append(dir_match)
+                if rank == 1:
+                    if 'top1_non_zero_cal_matches' not in locals():
+                        top1_non_zero_cal_matches = []
+                    top1_non_zero_cal_matches.append(dir_match)
 
             raw_stacker_directional_matches.append(raw_dir_match)
 
@@ -200,14 +210,18 @@ def run_faithfulness_audit():
     all_fidelity_rate = float(np.mean(all_directional_matches))
     raw_fidelity_rate = float(np.mean(raw_stacker_directional_matches))
     non_zero_raw_rate = float(np.mean(non_zero_raw_directional_matches)) if non_zero_raw_directional_matches else 0.0
+    non_zero_cal_rate = float(np.mean(non_zero_cal_directional_matches)) if 'non_zero_cal_directional_matches' in locals() and non_zero_cal_directional_matches else 0.0
+    top1_non_zero_rate = float(np.mean(top1_non_zero_cal_matches)) if 'top1_non_zero_cal_matches' in locals() and top1_non_zero_cal_matches else 0.0
 
     mean_top1_delta = float(np.mean(top1_measured_deltas))
     median_top1_delta = float(np.median(top1_measured_deltas))
 
     print(f"Top-1 Driver Spearman rho: {rho_top1:.4f} (p = {pval_top1:.4e})")
     print(f"Top-3 Drivers Spearman rho (N = 150): {rho_all:.4f} (p = {pval_all:.4e})")
-    print(f"Top-1 Directional Fidelity (Calibrated): {top1_fidelity_rate*100:.1f}%")
-    print(f"All Drivers Directional Fidelity (Calibrated): {all_fidelity_rate*100:.1f}%")
+    print(f"Top-1 Directional Fidelity (All N=50): {top1_fidelity_rate*100:.1f}%")
+    print(f"Top-1 Directional Fidelity on True Perturbations (N={len(top1_non_zero_cal_matches) if 'top1_non_zero_cal_matches' in locals() else 0}): {top1_non_zero_rate*100:.1f}%")
+    print(f"All Drivers Directional Fidelity (All N=150): {all_fidelity_rate*100:.1f}%")
+    print(f"All Drivers Directional Fidelity on True Perturbations (N={len(non_zero_cal_directional_matches) if 'non_zero_cal_directional_matches' in locals() else 0}): {non_zero_cal_rate*100:.1f}%")
     print(f"Pre-Calibration Stacker Directional Fidelity (All N=150): {raw_fidelity_rate*100:.1f}%")
     print(f"Pre-Calibration Stacker Fidelity on Non-Zero Deltas (N={len(non_zero_raw_directional_matches)}): {non_zero_raw_rate*100:.1f}%")
     print(f"Mean |Delta prob| on #1 Deletion: {mean_top1_delta:.4f} (Median: {median_top1_delta:.4f})")
@@ -220,7 +234,9 @@ def run_faithfulness_audit():
         "top3_all_spearman_rho": round(float(rho_all), 4),
         "top3_all_spearman_pvalue": float(pval_all),
         "top1_directional_fidelity_pct": round(top1_fidelity_rate * 100, 2),
+        "top1_non_zero_directional_fidelity_pct": round(top1_non_zero_rate * 100, 2),
         "all_drivers_directional_fidelity_pct": round(all_fidelity_rate * 100, 2),
+        "all_drivers_non_zero_directional_fidelity_pct": round(non_zero_cal_rate * 100, 2),
         "pre_calibration_stacker_directional_fidelity_pct": round(raw_fidelity_rate * 100, 2),
         "pre_calibration_non_zero_directional_fidelity_pct": round(non_zero_raw_rate * 100, 2),
         "non_zero_trials_count": len(non_zero_raw_directional_matches),

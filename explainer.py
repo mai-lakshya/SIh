@@ -1,9 +1,20 @@
 import re
 import json
+import logging
 import warnings
 import numpy as np
 import pandas as pd
 from scipy.special import logit
+
+logger = logging.getLogger(__name__)
+
+# Narrowly filter third-party PendingDeprecationWarnings from shap color palette functions
+warnings.filterwarnings(
+    "ignore",
+    message=r"The (set_bad|set_over|set_under) function will be deprecated in a future version\..*",
+    category=PendingDeprecationWarning,
+    module=r"shap\.plots\.colors\._colors"
+)
 import shap
 
 
@@ -34,10 +45,9 @@ class DualParadigmExplainer:
 
         # Section 2: Explicit honest check for TabNet
         if self.tabnet_model is None:
-            warnings.warn(
+            logger.info(
                 "No TabNet neural attention estimator detected in the ensemble artifact. "
-                "DualParadigmExplainer is operating in Meta-Learner-Weighted TreeSHAP mode.",
-                UserWarning
+                "DualParadigmExplainer is operating in Meta-Learner-Weighted TreeSHAP mode."
             )
 
         # If base models specify an expected feature count, align feature_names

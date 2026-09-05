@@ -1,3 +1,4 @@
+import os
 import time
 import schedule
 import pandas as pd
@@ -19,7 +20,10 @@ def run_monitoring_cycle():
         
         # In a real environment, this would pull new ground truth data from a DB
         # Here we simulate using a random subset of the historical data and adding noise
-        df = pd.read_csv('Revolution-main/indian_infrastructure_projects_dataset.csv')
+        dataset_path = 'indian_infrastructure_projects_dataset.csv'
+        if not os.path.exists(dataset_path) and os.path.exists('Revolution-main/indian_infrastructure_projects_dataset.csv'):
+            dataset_path = 'Revolution-main/indian_infrastructure_projects_dataset.csv'
+        df = pd.read_csv(dataset_path)
         ref_df = df.sample(1000, random_state=42)
         
         # Simulate new data arriving (with slight drift)

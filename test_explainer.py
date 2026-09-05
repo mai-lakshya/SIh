@@ -22,9 +22,17 @@ def fitted_explainer(sample_explainer_data):
     feature_names = list(X.columns)
     return DualParadigmExplainer(predictor, feature_names, background_data=X.head(50))
 
-def test_explainer_schema_and_finiteness(fitted_explainer, sample_explainer_data):
+def test_explainer_schema_and_finiteness(fitted_explainer, sample_explainer_data, caplog):
+    import logging
     X, _, _, _ = sample_explainer_data
     explainer = fitted_explainer
+
+    # Verify TabNet absence emits an INFO level log rather than a UserWarning
+    with caplog.at_level(logging.INFO):
+        test_exp = DualParadigmExplainer(explainer.hybrid_predictor, explainer.feature_names)
+        assert test_exp.tabnet_model is None
+        assert any("No TabNet neural attention estimator detected" in r.message for r in caplog.records)
+        assert not any(r.levelno >= logging.WARNING and "TabNet" in r.message for r in caplog.records)
     
     # Test on a single instance
     X_local = X.iloc[0:1]
@@ -403,4 +411,5 @@ def test_timeline_permutation_explainer_torch_free(rsf_survival_model):
     finally:
         if blocker in sys.meta_path:
             sys.meta_path.remove(blocker)
+
 

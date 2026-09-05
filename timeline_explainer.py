@@ -43,6 +43,12 @@ class TimelinePermutationExplainer:
         else:
             self.rsf_model = getattr(timeline_predictor, 'rsf', None)
 
+        if background_data is not None:
+            bg_df = background_data if isinstance(background_data, pd.DataFrame) else pd.DataFrame(background_data, columns=self.feature_names)
+            self.background_medians = bg_df.median(numeric_only=True).to_dict()
+        else:
+            self.background_medians = {}
+
         if background_data is not None and background_events is not None and background_times is not None:
             self.fit(background_data, background_events, background_times)
 
@@ -82,9 +88,18 @@ class TimelinePermutationExplainer:
     def fit(self, X_bg, events, times):
         """
         Computes permutation importance using Uno's C-index across features.
+        
+        NOTE ON IPCW ESTIMATION:
+        concordance_index_ipcw uses the reference background set (y_surv) to estimate the
+        Kaplan-Meier censoring distribution G(t) for inverse probability of censoring weights.
+        When a separate hold-out censoring cohort is unavailable, evaluating permutation
+        degradation on the reference set provides an unbiased relative ranking of feature sensitivity.
         """
         rng = np.random.RandomState(self.random_state)
         X_df = X_bg.copy() if isinstance(X_bg, pd.DataFrame) else pd.DataFrame(X_bg, columns=self.feature_names)
+
+        # Update background medians from fitted background
+        self.background_medians = X_df.median(numeric_only=True).to_dict()
 
         # Ensure column alignment
         for col in self.feature_names:
@@ -142,31 +157,122 @@ class TimelinePermutationExplainer:
             for feat, imp in sorted_items
         ]
 
-    def explain(self, row, top_k=5):
-        """
+    def _predict_raw(self, X_df):
+        if hasattr(self.timeline_predictor, 'predict_time_to_delay'):
+            return np.asarray(self.timeline_predictor.predict_time_to_delay(X_df), dtype=float)
+        elif self.rsf_model is not None and hasattr(self.rsf_model, 'predict'):
+            return np.asarray(self.rsf_model.predict(X_df), dtype=float)
+        elif hasattr(self.timeline_predictor, 'predict'):
+            res = self.timeline_predictor.predict(X_df)
+            if isinstance(res, dict) and 'predicted_delay_days' in res:
+                return np.asarray(res['predicted_delay_days'], dtype=float)
+            return np.asarray(res, dtype=float)
+        return np.zeros(len(X_df), dtype=float)
+
+    def explain(self, row, top_k=5, mode="global"):
+        r"""
         Generates feature-level rationale for a single instance or batch row.
+        
+        Parameters:
+        -----------
+        row : pd.DataFrame or dict
+            The instance to explain.
+        top_k : int
+            Number of top features to return.
+        mode : str, default "global"
+            - "global": Ranks features by globally-estimated Uno's C-index permutation importance.
+              (Documented: Explains overall survival risk drivers across the portfolio).
+            - "local": Ranks features by instance-level marginal perturbation sensitivity
+              |predict(row) - predict(row \ {f})| using reference background medians.
         """
         if self._cached_importance_list is None:
             # Default equal importances if fit not called
             self.feature_importances_ = {col: 1.0 / len(self.feature_names) for col in self.feature_names}
             self._build_cached_list()
 
-        row_df = row if isinstance(row, pd.DataFrame) else pd.DataFrame([row])
-        top_drivers = []
-        for item in self._cached_importance_list[:top_k]:
-            feat = item["feature"]
-            val = float(row_df[feat].values[0]) if feat in row_df.columns else 0.0
-            top_drivers.append({
-                "feature": feat,
-                "importance": float(item["importance"]),
-                "value": val
-            })
+        row_df = row.copy() if isinstance(row, pd.DataFrame) else pd.DataFrame([row])
+        for col in self.feature_names:
+            if col not in row_df.columns:
+                row_df[col] = self.background_medians.get(col, 0.0)
+        row_df = row_df[self.feature_names]
 
-        driver_names = [d["feature"] for d in top_drivers[:3]]
-        rationale_str = f"Timeline risk primarily driven by {', '.join(driver_names)} based on Uno's C-index survival permutation."
+        if mode == "local":
+            base_val_pred = float(self._predict_raw(row_df)[0])
+            local_impacts = []
+            for feat in self.feature_names:
+                orig_val = float(row_df[feat].values[0])
+                neut_val = float(self.background_medians.get(feat, 0.0))
+                row_pert = row_df.copy()
+                row_pert[feat] = neut_val
+                pert_pred = float(self._predict_raw(row_pert)[0])
+                abs_impact = abs(base_val_pred - pert_pred)
+                direction = "increases_delay" if base_val_pred >= pert_pred else "decreases_delay"
+                local_impacts.append({
+                    "feature": feat,
+                    "importance": float(abs_impact),
+                    "value": orig_val,
+                    "direction": direction,
+                    "global_importance": float(self.feature_importances_.get(feat, 0.0))
+                })
+            local_impacts.sort(key=lambda x: x["importance"], reverse=True)
+            top_drivers = local_impacts[:top_k]
+            driver_names = [d["feature"] for d in top_drivers[:3]]
+            rationale_str = f"Instance timeline risk driven by {', '.join(driver_names)} based on local marginal perturbation."
+        else:
+            top_drivers = []
+            for item in self._cached_importance_list[:top_k]:
+                feat = item["feature"]
+                val = float(row_df[feat].values[0]) if feat in row_df.columns else 0.0
+                top_drivers.append({
+                    "feature": feat,
+                    "importance": float(item["importance"]),
+                    "value": val
+                })
+            driver_names = [d["feature"] for d in top_drivers[:3]]
+            rationale_str = f"Global timeline risk driven by {', '.join(driver_names)} based on Uno's C-index survival permutation."
 
         return {
+            "mode": mode,
             "top_drivers": top_drivers,
             "feature_importance": self._cached_importance_list,
             "rationale": rationale_str
+        }
+
+    def evaluate_faithfulness(self, X_eval, top_k=1):
+        """
+        Deletion faithfulness test for timeline predictor:
+        Verifies that neutralizing the top driver for an instance causes a measurable
+        change in the predicted timeline survival score on true non-zero perturbations.
+        """
+        X_df = X_eval.copy() if isinstance(X_eval, pd.DataFrame) else pd.DataFrame(X_eval, columns=self.feature_names)
+        results = []
+        for i in range(len(X_df)):
+            row = X_df.iloc[[i]].copy()
+            base_score = float(self._predict_raw(row)[0])
+            exp = self.explain(row, top_k=top_k, mode="global")
+            top_feat = exp["top_drivers"][0]["feature"]
+            orig_val = float(row[top_feat].values[0])
+            neut_val = float(self.background_medians.get(top_feat, 0.0))
+
+            row_del = row.copy()
+            row_del[top_feat] = neut_val
+            del_score = float(self._predict_raw(row_del)[0])
+            delta = abs(base_score - del_score)
+            is_pert = abs(orig_val - neut_val) > 1e-5
+            results.append({
+                "row_index": i,
+                "top_feature": top_feat,
+                "orig_value": orig_val,
+                "neutral_value": neut_val,
+                "delta": delta,
+                "is_true_perturbation": is_pert,
+                "has_effect": delta > 1e-6
+            })
+        true_perts = [r for r in results if r["is_true_perturbation"]]
+        effect_rate = np.mean([r["has_effect"] for r in true_perts]) if true_perts else 0.0
+        return {
+            "sample_size": len(results),
+            "true_perturbation_count": len(true_perts),
+            "effect_rate_on_perturbations": float(effect_rate),
+            "results": results
         }
