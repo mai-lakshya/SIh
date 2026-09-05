@@ -131,11 +131,39 @@ def health_check():
 @app.get("/")
 def serve_home():
     from fastapi.responses import FileResponse, RedirectResponse
-    if os.path.exists("dashboard/index.html"):
-        return FileResponse("dashboard/index.html")
+    for path in ["dashboard/test_dashboard.html", "dashboard/index.html", "test_dashboard.html"]:
+        if os.path.exists(path):
+            return FileResponse(path)
     return RedirectResponse(url="/docs")
 
 def _prepare_df(payload_dict: dict) -> pd.DataFrame:
+    # 1. Normalize and dynamically derive statutory clearance risk scores
+    sia_raw = str(payload_dict.get('sia_approval_status', 'Pending')).strip()
+    sia_norm = sia_raw.lower().replace(' ', '_').replace('-', '_')
+    sia_score_map = {
+        'approved': 0.0,
+        'exempted': 0.0,
+        'in_progress': 0.4,
+        'pending': 0.75,
+        'rejected': 1.0
+    }
+    payload_dict['sia_approval_status_risk_score'] = sia_score_map.get(sia_norm, 0.5)
+
+    fc_raw = str(payload_dict.get('forest_clearance_status', 'Not_Required')).strip()
+    fc_norm = fc_raw.lower().replace(' ', '_').replace('-', '_')
+    fc_score_map = {
+        'not_required': 0.0,
+        'approved': 0.0,
+        'stage_2': 0.2,
+        'stage_1': 0.4,
+        'stage_1_approved': 0.4,
+        'in_progress': 0.6,
+        'stage_1_pending': 0.8,
+        'pending': 0.8,
+        'rejected': 1.0
+    }
+    payload_dict['forest_clearance_status_risk_score'] = fc_score_map.get(fc_norm, 0.5)
+
     raw_payload = pd.DataFrame([payload_dict])
     for col in ['C_r', 'F_r', 'H_r', 'W_r', 'P_r']:
         if col not in raw_payload:
@@ -215,9 +243,36 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
             meta_coefs = {k: round(float(v), 3) for k, v in system.explainer.meta_coefficients.items()}
 
         # Top full features with signed TreeSHAP impacts
+        feature_labels = {
+            "F_r": "Fund Disbursement Risk Ratio (F_r)",
+            "C_r": "Compensation Demand Ratio (C_r)",
+            "P_r": "Protest & Agitation Risk Factor (P_r)",
+            "H_r": "Historical State Delay Ratio (H_r)",
+            "W_r": "Weather Vulnerability Index (W_r)",
+            "affected_families_count": "Affected Families Count",
+            "title_dispute_rate_percent": "Title Dispute Rate (%)",
+            "local_protest_flag": "Local Agitation / Protest Flag",
+            "compensation_multiplier_demand": "Compensation Multiplier Demand",
+            "forest_clearance_status": "Forest Clearance Status",
+            "forest_clearance_status_risk_score": "Forest Clearance Risk Score",
+            "sia_approval_status": "SIA Approval Status",
+            "sia_approval_status_risk_score": "SIA Approval Risk Score",
+            "fund_disbursement_percent": "Fund Disbursement Progress (%)",
+            "terrain_type": "Terrain Complexity",
+            "project_age_years": "Project Age (Years)",
+            "project_start_year": "Project Start Year",
+            "land_area_hectares": "Land Area (Hectares)"
+        }
+
         full_feats = result['explanation'].get('local_explanation_full', [])
+        for f in full_feats:
+            f['feature_label'] = feature_labels.get(f.get('feature'), f.get('feature', '').replace('_', ' ').title())
         # Sort full features by absolute impact
         full_feats_sorted = sorted(full_feats, key=lambda x: abs(x.get('shap_impact', 0)), reverse=True)[:10]
+
+        top_drivers = result['explanation'].get('risk_drivers', [])
+        for d in top_drivers:
+            d['feature_label'] = feature_labels.get(d.get('feature'), d.get('feature', '').replace('_', ' ').title())
 
         # Prescriptive Actions & Dynamic ROI Calculations
         raw_recs = result.get('recommendations', [])
@@ -232,6 +287,9 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
         model_inst = getattr(system, 'hybrid_predictor', None)
 
         prescriptive_actions = []
+        seen_titles = set()
+        template_cursor = {}
+
         for rec in raw_recs:
             try:
                 roi_info = calculate_roi_for_recommendation(
@@ -249,12 +307,42 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
                     'roi_percentage': 150.0
                 }
             
-            title = rec.get('issue', 'Mitigation Action')
-            if 'actions' in rec and rec['actions']:
-                title = rec['actions'][0]
-                desc = rec['actions'][1] if len(rec['actions']) > 1 else rec.get('issue', '')
+            # Determine template/category key for cycling actions
+            t_key = rec.get('template_key') or rec.get('category') or rec.get('source', 'default')
+            actions = rec.get('actions', [])
+            
+            title = None
+            desc = None
+            
+            if actions:
+                cursor = template_cursor.get(t_key, 0)
+                while cursor < len(actions):
+                    candidate = actions[cursor].strip()
+                    if candidate.lower() not in seen_titles:
+                        title = candidate
+                        # Use next action as description if available, otherwise issue or expected impact
+                        if cursor + 1 < len(actions):
+                            desc = actions[cursor + 1].strip()
+                            template_cursor[t_key] = cursor + 2
+                        else:
+                            desc = rec.get('expected_impact') or rec.get('issue', 'Operational mitigation intervention')
+                            template_cursor[t_key] = cursor + 1
+                        break
+                    cursor += 1
+                # If all distinct actions for this category are exhausted, skip adding redundant cards
+                if not title:
+                    continue
             else:
-                desc = rec.get('expected_impact', 'Operational intervention')
+                candidate_issue = rec.get('issue', 'Mitigation Action').strip()
+                if candidate_issue.lower() not in seen_titles:
+                    title = candidate_issue
+                    desc = rec.get('expected_impact', 'Operational intervention')
+
+            # Skip duplicate / exhausted recommendations so each card is unique and impactful
+            if not title or title.lower() in seen_titles:
+                continue
+
+            seen_titles.add(title.lower())
                 
             # Allow authentic values to surface without artificial floors
             delay_saved = round(float(roi_info.get('estimated_delay_days_saved', 0.0)), 1)
@@ -274,7 +362,6 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
                 "avoided_delay_days": delay_saved,
                 "cost_saved_cr": cost_savings_cr,
                 "cost_savings": cost_savings_cr,
-                "cost_savings_cr": cost_savings_cr,
                 "roi": roi_pct,
                 "roi_percentage": roi_pct,
                 "roi_percent": int(round(roi_pct)),

@@ -100,9 +100,45 @@ class RiskAnalysisSystem:
         # 2. Ensemble Predictions
         try:
             preds = self.hybrid_model.predict(X_proc, blend_monotonicity=True)
-            delay_prob = preds['delay_probability'][0]
-            crs = preds['crs'][0]
-            delay_days = preds['delay_days'][0]
+            delay_prob = float(preds['delay_probability'][0])
+            crs = float(preds['crs'][0])
+            delay_days = float(preds['delay_days'][0])
+            
+            # Statutory Monotonicity Calibration (SMC) under RFCTLARR Act 2013 & FCA 1980
+            sia_val = str(raw_data['sia_approval_status'].iloc[0]).strip().lower().replace(' ', '_').replace('-', '_') if 'sia_approval_status' in raw_data.columns else None
+            fc_val = str(raw_data['forest_clearance_status'].iloc[0]).strip().lower().replace(' ', '_').replace('-', '_') if 'forest_clearance_status' in raw_data.columns else None
+
+            if sia_val is not None or fc_val is not None:
+                sia_score_map = {
+                    'approved': 0.0,
+                    'exempted': 0.0,
+                    'in_progress': 0.4,
+                    'pending': 0.75,
+                    'rejected': 1.0
+                }
+                fc_score_map = {
+                    'not_required': 0.0,
+                    'approved': 0.0,
+                    'stage_2': 0.2,
+                    'stage_1': 0.4,
+                    'stage_1_approved': 0.4,
+                    'in_progress': 0.6,
+                    'stage_1_pending': 0.8,
+                    'pending': 0.8,
+                    'rejected': 1.0
+                }
+                
+                s_sia = sia_score_map.get(sia_val, 0.4) if sia_val else 0.4
+                s_fc = fc_score_map.get(fc_val, 0.4) if fc_val else 0.4
+                
+                # Neutral baseline reference is In_Progress (0.4) / Stage_1 (0.4)
+                delta_sia = s_sia - 0.4
+                delta_fc = s_fc - 0.4
+
+                # Statutory schedule drift and risk shifts:
+                delay_days = max(15.0, delay_days + (delta_sia * 190.0) + (delta_fc * 160.0))
+                delay_prob = float(np.clip(delay_prob + (delta_sia * 0.22) + (delta_fc * 0.18), 0.05, 0.98))
+                crs = float(np.clip(crs + (delta_sia * 24.0) + (delta_fc * 20.0), 5.0, 98.0))
             
             risk_tier = "Critical" if crs > 75 else "High" if crs > 50 else "Medium" if crs > 25 else "Low"
         except Exception as e:
