@@ -315,3 +315,97 @@ def test_api_delay_prevention_integration():
     assert "roi" in first_rec
     assert "buffer_status" in first_rec
     assert first_rec["avoided_delay"] > 0
+
+
+def test_dynamic_implementation_cost_mega_projects_threshold():
+    """
+    Test C5: Verifies threshold ordering in get_dynamic_implementation_cost.
+    Projects > 10,000 Cr must get 1.5x premium, not 1.3x.
+    """
+    from recommendation_engine import get_dynamic_implementation_cost
+
+    base_legal = 15_00_000.0
+
+    # Normal project (< 5,000 Cr) -> 1.0x
+    cost_normal = get_dynamic_implementation_cost('high_legal_risk', 10_00_00_00_000)
+    assert cost_normal == base_legal
+
+    # Mega-project (> 5,000 Cr, e.g. 6,000 Cr) -> 1.3x
+    cost_5k = get_dynamic_implementation_cost('high_legal_risk', 60_00_00_00_000)
+    assert cost_5k == base_legal * 1.3
+
+    # Super mega-project (> 10,000 Cr, e.g. 12,000 Cr) -> 1.5x (asserts branch ordering fix)
+    cost_10k = get_dynamic_implementation_cost('high_legal_risk', 120_00_00_00_000)
+    assert cost_10k == base_legal * 1.5
+
+
+def test_explicit_feature_to_template_isolation():
+    """
+    Test C3: Verifies explicit FEATURE_TO_TEMPLATE_KEY prevents false substring matches.
+    'P_r' and 'land_area_hectares' must not map to 'clearance_delays' or 'environmental_risk'.
+    """
+    from recommendation_engine import RecommendationEngine
+
+    engine = RecommendationEngine()
+    drivers = [
+        ("P_r", 0.8),
+        ("land_area_hectares", 0.7),
+        ("title_dispute_rate_percent", 0.9),
+        ("fund_disbursement_percent", 0.6),
+        ("forest_clearance_status", 0.85)
+    ]
+    recs = engine.generate_recommendations(drivers)
+    rec_by_driver = {r.get("risk_driver"): r for r in recs if "risk_driver" in r}
+
+    assert rec_by_driver["P_r"]["template_key"] == "administrative_risk"
+    assert rec_by_driver["land_area_hectares"]["template_key"] == "administrative_risk"
+    assert rec_by_driver["title_dispute_rate_percent"]["template_key"] == "high_legal_risk"
+    assert rec_by_driver["fund_disbursement_percent"]["template_key"] == "financial_risk"
+    assert rec_by_driver["forest_clearance_status"]["template_key"] == "clearance_delays"
+
+
+def test_feature_direction_and_data_driven_roi():
+    """
+    Test C1 & C4: Verifies data-driven simulation runs when model and X_sample are passed,
+    and feature direction correctly increases beneficial features like fund_disbursement_percent.
+    """
+    import pandas as pd
+    from recommendation_engine import calculate_roi_for_recommendation
+
+    class MockModel:
+        def __init__(self):
+            self.last_mitigated = None
+
+        def predict(self, X):
+            self.last_mitigated = X.copy()
+            # If fund_disbursement_percent increased, predicted delay days drops
+            fund = X.get("fund_disbursement_percent", [50.0])[0] if isinstance(X, pd.DataFrame) else 50.0
+            delay = 100.0 - (fund * 0.5)
+            return {"predicted_delay_days": [max(0.0, delay)]}
+
+    mock_model = MockModel()
+    X_sample = pd.DataFrame([{"fund_disbursement_percent": 20.0, "title_dispute_rate_percent": 30.0}])
+
+    rec_fund = {
+        "risk_driver": "fund_disbursement_percent",
+        "template_key": "financial_risk",
+        "importance": 0.8,
+        "direction": "decreases_delay"
+    }
+
+    roi = calculate_roi_for_recommendation(
+        rec_fund,
+        project_cost=10_00_00_000,
+        delay_cost_per_day=50_000,
+        model=mock_model,
+        X_sample=X_sample
+    )
+
+    # Verifies data-driven path was called
+    assert mock_model.last_mitigated is not None
+    # Verifies fund disbursement was INCREASED (from 20 to 25)
+    mitigated_fund = mock_model.last_mitigated["fund_disbursement_percent"].values[0]
+    assert mitigated_fund > 20.0
+    # Verifies delay saved > 0
+    assert roi["estimated_delay_days_saved"] > 0
+

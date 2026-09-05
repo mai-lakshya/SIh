@@ -32,7 +32,7 @@ jobs:
 
     - name: Run Unit & Invariant Tests
       run: |
-        pytest test_pipeline.py test_hybrid_model.py test_timeline.py test_evaluate_model.py test_explainer.py test_invariants.py -v
+        pytest test_pipeline.py test_delay_prevention.py test_hybrid_model.py test_timeline.py test_evaluate_model.py test_explainer.py test_invariants.py -v
 
   train_and_deploy:
     runs-on: ubuntu-latest

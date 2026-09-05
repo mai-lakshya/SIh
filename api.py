@@ -171,13 +171,22 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
         project_cost_inr = payload.estimated_cost_inr_crore * 10_000_000
         delay_cost_per_day = max(100_000, (project_cost_inr * 0.12) / 365)
         
+        # Prepare processed feature sample for data-driven simulation
+        try:
+            X_sample = system.pipeline.transform(raw_payload) if hasattr(system, 'pipeline') and system.pipeline is not None else None
+        except Exception:
+            X_sample = None
+        model_inst = getattr(system, 'hybrid_predictor', None)
+
         prescriptive_actions = []
         for rec in raw_recs:
             try:
                 roi_info = calculate_roi_for_recommendation(
                     rec,
                     project_cost=project_cost_inr,
-                    delay_cost_per_day=delay_cost_per_day
+                    delay_cost_per_day=delay_cost_per_day,
+                    model=model_inst,
+                    X_sample=X_sample
                 )
             except Exception as roi_err:
                 logging.warning("ROI calculation failed for rec %s (%s); applying fallback", rec.get('issue'), roi_err)
@@ -194,9 +203,10 @@ async def predict_risk(request: Request, payload: ProjectPayload, api_key: str =
             else:
                 desc = rec.get('expected_impact', 'Operational intervention')
                 
-            delay_saved = max(1, round(roi_info.get('estimated_delay_days_saved', 30)))
-            cost_savings_cr = round(roi_info.get('cost_savings', 0) / 10_000_000, 1)
-            roi_pct = max(10, round(roi_info.get('roi_percentage', 150)))
+            # Allow authentic values to surface without artificial floors
+            delay_saved = round(float(roi_info.get('estimated_delay_days_saved', 0.0)), 1)
+            cost_savings_cr = round(float(roi_info.get('cost_savings', 0.0)) / 10_000_000, 2)
+            roi_pct = round(float(roi_info.get('roi_percentage', 0.0)), 1)
             
             prescriptive_actions.append({
                 "title": title,

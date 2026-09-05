@@ -651,8 +651,67 @@ class RecommendationEngine:
                 'priority': 'Medium',
                 'timeframe': 'Medium-term (30-90 days)',
                 'expected_impact': 'Ensure 100% statutory compliance and prevent stop-work notices'
+            },
+            'administrative_risk': {
+                'actions': [
+                    'Establish inter-departmental task force with district collectorate',
+                    'Implement weekly digital milestone tracking across line departments',
+                    'Harmonize survey and revenue record discrepancies across taluks',
+                    'Streamline administrative approval chains to avoid bureaucratic idle time'
+                ],
+                'priority': 'Medium',
+                'timeframe': 'Short-term (0-45 days)',
+                'expected_impact': 'Optimize administrative decision velocity and minimize process latency'
             }
         }
+
+    # Explicit feature-to-template mapping isolating geography/area from clearance/environmental
+    FEATURE_TO_TEMPLATE_KEY: Dict[str, str] = {
+        # High Legal Risk / Title Disputes
+        "title_dispute_rate_percent": "high_legal_risk",
+        "section_11_notification_days": "high_legal_risk",
+        "compensation_multiplier_demand": "high_legal_risk",
+        "legal": "high_legal_risk",
+        "dispute": "high_legal_risk",
+
+        # High Social Risk / R&R / Protests
+        "affected_families_count": "high_social_risk",
+        "local_protest_flag": "high_social_risk",
+        "population_density": "high_social_risk",
+
+        # Clearance Delays
+        "forest_clearance_status": "clearance_delays",
+        "forest_clearance_status_risk_score": "clearance_delays",
+        "sia_approval_status": "clearance_delays",
+        "sia_approval_status_risk_score": "clearance_delays",
+
+        # Financial Risk
+        "estimated_cost_inr_crore": "financial_risk",
+        "fund_disbursement_percent": "financial_risk",
+        "financial_density": "financial_risk",
+        "financial_burn_rate_to_date": "financial_risk",
+        "C_r": "financial_risk",
+        "F_r": "financial_risk",
+
+        # Environmental Risk
+        "terrain_type": "environmental_risk",
+        "environmental": "environmental_risk",
+        "eco_sensitive": "environmental_risk",
+
+        # Administrative Workflow & Geography (strictly non-clearance)
+        "project_id": "administrative_risk",
+        "project_type": "administrative_risk",
+        "state": "administrative_risk",
+        "district": "administrative_risk",
+        "land_area_hectares": "administrative_risk",
+        "land_area_log": "administrative_risk",
+        "project_start_year": "administrative_risk",
+        "project_age_years": "administrative_risk",
+        "state_project_type": "administrative_risk",
+        "H_r": "administrative_risk",
+        "W_r": "administrative_risk",
+        "P_r": "administrative_risk",
+    }
 
     def generate_recommendations(
         self, 
@@ -669,18 +728,22 @@ class RecommendationEngine:
 
         # 1. Generate Template-driven Risk Driver Recommendations
         for feature, importance in risk_drivers:
-            f_lower = feature.lower()
-            t_key = 'financial_risk'
-            if 'dispute' in f_lower or 'legal' in f_lower or 'section_11' in f_lower:
-                t_key = 'high_legal_risk'
-            elif 'protest' in f_lower or 'family' in f_lower or 'families' in f_lower or 'social' in f_lower:
-                t_key = 'high_social_risk'
-            elif 'clearance' in f_lower or 'forest' in f_lower or 'p_r' in f_lower or 'complexity' in f_lower:
-                t_key = 'clearance_delays'
-            elif 'fund' in f_lower or 'cost' in f_lower or 'deficit' in f_lower or 'gap' in f_lower:
-                t_key = 'financial_risk'
-            elif 'environment' in f_lower or 'terrain' in f_lower or 'area' in f_lower:
-                t_key = 'environmental_risk'
+            # Check explicit mapping table first (avoids fragile substring false matches like 'p_r' or 'area')
+            t_key = self.FEATURE_TO_TEMPLATE_KEY.get(feature)
+            if t_key is None:
+                f_lower = feature.lower()
+                if 'dispute' in f_lower or 'legal' in f_lower or 'section_11' in f_lower:
+                    t_key = 'high_legal_risk'
+                elif 'protest' in f_lower or 'family' in f_lower or 'families' in f_lower or 'social' in f_lower:
+                    t_key = 'high_social_risk'
+                elif 'forest' in f_lower or ('clearance' in f_lower and 'area' not in f_lower):
+                    t_key = 'clearance_delays'
+                elif 'fund' in f_lower or 'cost' in f_lower or 'burn' in f_lower or 'deficit' in f_lower or 'gap' in f_lower:
+                    t_key = 'financial_risk'
+                elif 'environment' in f_lower or 'eco' in f_lower:
+                    t_key = 'environmental_risk'
+                else:
+                    t_key = 'financial_risk'
 
             rec_id = f"driver_{t_key}_{feature}"
             if rec_id not in seen_keys:
@@ -956,15 +1019,16 @@ def get_dynamic_implementation_cost(template_key: str, project_cost: float) -> f
         'clearance_delays': 25_00_000.0,
         'financial_risk': 10_00_000.0,
         'environmental_risk': 25_00_000.0,
+        'administrative_risk': 12_00_000.0,
         'zero_delay_buffer_preservation': 2_50_000.0
     }
     base_cost = cost_map.get(template_key, 10_00_000.0)
 
-    # Size adjustment for mega-projects (> 5,000 Crores)
-    if project_cost > 50_00_00_00_000:
-        base_cost *= 1.3
-    elif project_cost > 100_00_00_00_000:
+    # Size adjustment for mega-projects: larger threshold must be checked first
+    if project_cost > 100_00_00_00_000:   # 10,000 Cr — 1.5x
         base_cost *= 1.5
+    elif project_cost > 50_00_00_00_000:  # 5,000 Cr — 1.3x
+        base_cost *= 1.3
 
     return base_cost
 
@@ -983,22 +1047,39 @@ def calculate_roi_for_recommendation(
         try:
             X_mitigated = X_sample.copy()
             feature = recommendation['risk_driver']
-            if feature in X_mitigated.columns:
-                X_mitigated[feature] = X_mitigated[feature] * 0.8
+            direction = recommendation.get('direction', 'increases_delay')
 
-            orig_delay = model.predict(X_sample)['predicted_delay_days'][0]
-            new_delay = model.predict(X_mitigated)['predicted_delay_days'][0]
+            if feature in X_mitigated.columns:
+                curr_val = float(X_mitigated[feature].values[0])
+                # Verify mitigation direction per feature:
+                # 1. Features where HIGHER is better: simulate improvement by increasing value
+                if 'fund' in feature.lower() or 'disbursement' in feature.lower():
+                    X_mitigated[feature] = min(100.0, curr_val * 1.25)
+                elif 'clearance' in feature.lower() and ('status' in feature.lower() and 'score' not in feature.lower()):
+                    X_mitigated[feature] = 1.0
+                elif 'sia' in feature.lower() and ('status' in feature.lower() and 'score' not in feature.lower()):
+                    X_mitigated[feature] = 1.0
+                elif direction == "decreases_delay":
+                    X_mitigated[feature] = curr_val * 1.2
+                else:
+                    # 2. Features where LOWER is better (disputes, protest flags, cost overruns, area, affected families)
+                    X_mitigated[feature] = curr_val * 0.8
+
+            pred_orig = model.predict(X_sample)
+            pred_mit = model.predict(X_mitigated)
+            orig_delay = float(pred_orig.get('predicted_delay_days', pred_orig.get('delay_days', [30]))[0])
+            new_delay = float(pred_mit.get('predicted_delay_days', pred_mit.get('delay_days', [30]))[0])
             estimated_delay_days_saved = max(0.0, orig_delay - new_delay)
         except Exception as e:
             logger.warning("Data-driven ROI simulation failed (%s); using deterministic heuristic", e)
             importance = float(recommendation.get('importance', 0.5))
-            estimated_delay_days_saved = importance * 0.3 * 180.0
+            estimated_delay_days_saved = max(0.0, importance * 0.3 * 180.0)
     else:
         if recommendation.get("is_zero_delay_state", False):
             estimated_delay_days_saved = 5.0
         else:
             importance = float(recommendation.get('importance', 0.5))
-            estimated_delay_days_saved = max(2.0, importance * 0.3 * 180.0)
+            estimated_delay_days_saved = max(0.0, importance * 0.3 * 180.0)
 
     cost_savings = estimated_delay_days_saved * delay_cost_per_day
     impl_cost = get_dynamic_implementation_cost(
