@@ -64,7 +64,10 @@ async function runHealthVerification() {
 
   // 4. Verify Streamlit Model Health Tab implementation
   console.log('\n4. Checking Streamlit dashboard.py implementation...');
-  const pyDashboard = fs.readFileSync(path.join(__dirname, '../dashboard.py'), 'utf8');
+  const pyDashboardPath = fs.existsSync(path.join(__dirname, '../frontend/dashboard.py'))
+    ? path.join(__dirname, '../frontend/dashboard.py')
+    : path.join(__dirname, '../dashboard.py');
+  const pyDashboard = fs.readFileSync(pyDashboardPath, 'utf8');
   if (!pyDashboard.includes('tab_model_health') || !pyDashboard.includes('Model Health')) {
     throw new Error('dashboard.py missing Model Health tab implementation');
   }

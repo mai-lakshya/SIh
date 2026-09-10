@@ -11,12 +11,29 @@ End-to-End Verification Test for NEXUS-XAI Continuous Learning Pipeline
 """
 
 import os
+import sys
 import json
 import time
 import random
 import numpy as np
 import pandas as pd
 import joblib
+
+_WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+for _p in [
+    _WORKSPACE_ROOT,
+    os.path.join(_WORKSPACE_ROOT, "backend"),
+    os.path.join(_WORKSPACE_ROOT, "backend", "01_intake"),
+    os.path.join(_WORKSPACE_ROOT, "backend", "02_preprocessing"),
+    os.path.join(_WORKSPACE_ROOT, "backend", "03_models"),
+    os.path.join(_WORKSPACE_ROOT, "backend", "04_xai"),
+    os.path.join(_WORKSPACE_ROOT, "backend", "05_orchestration"),
+    os.path.join(_WORKSPACE_ROOT, "backend", "06_mlops"),
+    os.path.join(_WORKSPACE_ROOT, "backend", "07_api"),
+    os.path.join(_WORKSPACE_ROOT, "remoteness"),
+]:
+    if os.path.exists(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from continuous_learning import (
     ingest_project_records,
