@@ -2198,6 +2198,58 @@
     </div>
   </div>
 
+  <!-- Dedicated Executive Summary PDF Report Preview Modal -->
+  <div id="report-preview-modal" onclick="if (event.target === this) closeReportPreviewModal()" style="display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 3000; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: #ffffff; width: 100%; max-width: 980px; height: 90vh; border-radius: 16px; overflow: hidden; box-shadow: 0 25px 65px -10px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; border: 1px solid var(--color-border);">
+      
+      <!-- Modal Header -->
+      <div style="padding: 14px 22px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center; background: var(--color-frost);">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(0, 113, 227, 0.1); display: flex; align-items: center; justify-content: center; color: var(--color-apple-blue);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+          </div>
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h3 id="report-preview-title" style="font-size: 15px; font-weight: 700; color: var(--color-carbon); margin: 0;">Project Risk Summary Memo</h3>
+              <span id="report-preview-provenance-badge" style="font-size: 10.5px; font-weight: 600; background: #e2e8f0; color: var(--color-carbon); border-radius: 980px; padding: 1px 8px;">Trained Model</span>
+            </div>
+            <p id="report-preview-filename" style="font-size: 11.5px; color: var(--color-ash); margin: 2px 0 0 0; font-family: var(--font-family-mono);">Project.pdf</p>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button id="report-preview-download-btn" class="btn-apple-primary" style="padding: 6px 16px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Download PDF</span>
+          </button>
+          <button id="report-preview-tab-btn" class="btn-apple-secondary" style="padding: 6px 12px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px;" title="Open PDF in new tab">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+            <span>Open in Tab</span>
+          </button>
+          <button onclick="closeReportPreviewModal()" style="width: 32px; height: 32px; border-radius: 50%; border: none; background: rgba(0,0,0,0.06); cursor: pointer; font-size: 18px; color: var(--color-smoke); display: flex; align-items: center; justify-content: center; margin-left: 4px; transition: background 0.15s ease;" title="Close (Esc)">&times;</button>
+        </div>
+      </div>
+
+      <!-- Modal Body (PDF Viewer) -->
+      <div style="flex: 1; position: relative; background: #525659; overflow: hidden;">
+        <iframe id="report-preview-iframe" src="" style="width: 100%; height: 100%; border: none;"></iframe>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Notification Toast -->
   <div id="apple-toast" class="apple-toast">
     <span id="toast-message">Action completed successfully.</span>
@@ -6535,27 +6587,23 @@
           throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         }
 
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
+        // Resolve project name for clean filename
+        const rawName = projectPayload.project_name || projectPayload.name || projectPayload.project_id || 'Project';
+        let safeName = String(rawName).trim().replace(/[\\/*?:"<>|]/g, '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+        if (!safeName) safeName = 'Project';
+        let filename = `${safeName}.pdf`;
 
-        let filename = `NEXUS_Risk_Summary_${projId.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
         const disp = res.headers.get('Content-Disposition');
         if (disp && disp.includes('filename=')) {
-          const match = disp.match(/filename="?([^"]+)"?/);
-          if (match && match[1]) filename = match[1];
+          const match = disp.match(/filename="?([^";]+)"?/);
+          if (match && match[1]) filename = match[1].trim();
         }
 
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-
         const prov = res.headers.get('X-Model-Provenance') || 'Trained Model';
-        showToast(`Executive report downloaded (${filename}). Engine: ${prov}.`);
+
+        // Open interactive report preview modal before download
+        openReportPreviewModal(blob, filename, rawName, prov);
+        showToast(`Executive report preview ready for ${rawName}.`);
       } catch (err) {
         console.error('[Export Summary] Report generation failed:', err);
         showToast(`Report export error: ${err.message || 'Server error'}`);
@@ -6566,6 +6614,77 @@
         }
       }
     }
+
+    // =========================================================================
+    // EXECUTIVE SUMMARY PDF REPORT PREVIEW CONTROLLER
+    // =========================================================================
+    let currentReportBlobUrl = null;
+    let currentReportFilename = 'Project.pdf';
+
+    function openReportPreviewModal(blob, filename, projTitle, provenance) {
+      if (currentReportBlobUrl) {
+        try { window.URL.revokeObjectURL(currentReportBlobUrl); } catch(e) {}
+      }
+      currentReportBlobUrl = window.URL.createObjectURL(blob);
+      currentReportFilename = filename;
+
+      const modal = document.getElementById('report-preview-modal');
+      const iframe = document.getElementById('report-preview-iframe');
+      const titleEl = document.getElementById('report-preview-title');
+      const badgeEl = document.getElementById('report-preview-provenance-badge');
+      const filenameEl = document.getElementById('report-preview-filename');
+      const downloadBtn = document.getElementById('report-preview-download-btn');
+      const tabBtn = document.getElementById('report-preview-tab-btn');
+
+      if (titleEl) titleEl.textContent = `${projTitle} — Risk Assessment Report`;
+      if (filenameEl) filenameEl.textContent = filename;
+      if (badgeEl) {
+        badgeEl.textContent = String(provenance).includes('Fallback') ? 'Statutory RFCTLARR Engine' : 'Internal Trained Model';
+      }
+
+      if (iframe) {
+        iframe.src = currentReportBlobUrl + '#toolbar=1&navpanes=0';
+      }
+
+      if (downloadBtn) {
+        downloadBtn.onclick = function() {
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = currentReportBlobUrl;
+          a.download = currentReportFilename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          showToast(`Downloaded ${currentReportFilename}`);
+        };
+      }
+
+      if (tabBtn) {
+        tabBtn.onclick = function() {
+          window.open(currentReportBlobUrl, '_blank');
+        };
+      }
+
+      if (modal) {
+        modal.style.display = 'flex';
+      }
+    }
+
+    function closeReportPreviewModal() {
+      const modal = document.getElementById('report-preview-modal');
+      const iframe = document.getElementById('report-preview-iframe');
+      if (modal) modal.style.display = 'none';
+      if (iframe) iframe.src = '';
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        const previewModal = document.getElementById('report-preview-modal');
+        if (previewModal && previewModal.style.display !== 'none') {
+          closeReportPreviewModal();
+        }
+      }
+    });
 
     // =========================================================================
     // TASK 3, 4 & 5: PERSISTENT SAVED ANALYSES ENGINE (Map Markers & Storage)

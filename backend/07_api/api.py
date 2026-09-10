@@ -1798,13 +1798,18 @@ async def export_summary_report(
     # 5. Compile professional PDF memo
     pdf_bytes = report_pdf_generator.generate_pdf_bytes(project_data, preds_data, narrative)
 
-    # 6. Return response with clean filename
-    safe_pid = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(project_data.get("project_id", "Project")))
+    # 6. Return response with clean filename named after project
+    raw_name = project_data.get("project_name") or project_data.get("project_id") or "Project"
+    safe_name = re.sub(r'[\\/*?:"<>|]', '', str(raw_name)).strip().replace(' ', '_')
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '', safe_name)
+    safe_name = re.sub(r'_+', '_', safe_name).strip('_')
+    if not safe_name:
+        safe_name = "Project"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="NEXUS_Risk_Summary_{safe_pid}.pdf"',
+            "Content-Disposition": f'attachment; filename="{safe_name}.pdf"',
             "X-Model-Provenance": narrative.get("provenance", "Internal")
         }
     )

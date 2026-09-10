@@ -262,14 +262,18 @@ def test_export_summary_api_endpoint_integration(sample_project, sample_metrics)
 
     assert response.status_code == 200, f"API error: {response.status_code} - {response.text}"
     assert response.headers.get("content-type") == "application/pdf"
-    assert "attachment; filename=" in response.headers.get("content-disposition", "")
+    disp = response.headers.get("content-disposition", "")
+    assert "attachment; filename=" in disp
+    # Verify file is named after project name, NOT NEXUS_Risk_Summary_
+    assert 'filename="NHAI-2026-GUJ-8891.pdf"' in disp
+    assert "NEXUS_Risk_Summary" not in disp
     assert "X-Model-Provenance" in response.headers
     assert response.content.startswith(b"%PDF-")
 
 
 def test_export_summary_get_route_default(sample_project):
     """
-    Verifies GET /api/reports/export-summary also responds with a valid PDF.
+    Verifies GET /api/reports/export-summary also responds with a valid PDF and project name filename.
     """
     from fastapi.testclient import TestClient
     from backend.api import app
@@ -278,4 +282,7 @@ def test_export_summary_get_route_default(sample_project):
     response = client.get("/api/reports/export-summary?project_id=PROJ-DEFAULT-TEST")
     assert response.status_code == 200
     assert response.headers.get("content-type") == "application/pdf"
+    disp = response.headers.get("content-disposition", "")
+    assert 'filename="PROJ-DEFAULT-TEST.pdf"' in disp
+    assert "NEXUS_Risk_Summary" not in disp
     assert response.content.startswith(b"%PDF-")
