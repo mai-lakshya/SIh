@@ -56,9 +56,11 @@ sih_codebase.txt
 # Export Staging & Bundles
 export/
 *.zip
+*.bin
 updated_files.zip
 scratch_edge_*/
 scratch_edge_user/
 test_edge_*/
 scratch/
+
 
