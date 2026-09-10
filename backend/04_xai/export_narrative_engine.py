@@ -1,6 +1,6 @@
 """
 Export Summary Dedicated Narrative Generation Engine
-NEXUS-XAI National Risk Platform
+National Risk Platform
 
 This module generates deep, multi-section analyst risk memos for the Export Summary report
 using only the platform's internal trained models and statutory governance engine.
@@ -156,7 +156,7 @@ class ExportNarrativeEngine:
         4. Applies consistency guardrail to guarantee numbers cannot drift.
         """
         prompt = self.build_export_prompt(project, metrics)
-        provenance = "NEXUS Trained Model Engine (Internal)"
+        provenance = "Internal Trained Model Engine"
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:

@@ -236,6 +236,15 @@ def test_pdf_generator_compiles_valid_pdf(sample_project, sample_metrics):
     assert pdf_bytes.startswith(b"%PDF-"), "Invalid PDF binary header"
     assert b"%%EOF" in pdf_bytes[-1024:], "Missing standard PDF EOF marker"
 
+    # Verify no 'nexus' text appears in the generated PDF
+    import io
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    full_text = ""
+    for page in reader.pages:
+        full_text += page.extract_text() or ""
+    assert "nexus" not in full_text.lower(), f"Unexpected 'nexus' found in generated PDF text: {full_text}"
+
 
 # =========================================================================
 # TEST 5: API ROUTE INTEGRATION
