@@ -114,6 +114,7 @@ async function run() {
       (() => {
         const banner = document.querySelector('.gov-identity-banner');
         const emblem = document.querySelector('.gov-emblem');
+        const rru = document.querySelector('.gov-rru-logo');
         const swachh = document.querySelector('.gov-swachh-logo');
         const nav = document.querySelector('.apple-sub-nav');
         return {
@@ -122,6 +123,9 @@ async function run() {
           emblemSrc: emblem ? emblem.src : null,
           emblemLoaded: emblem ? (emblem.complete && emblem.naturalWidth > 0) : false,
           emblemDims: emblem ? { width: emblem.naturalWidth, height: emblem.naturalHeight } : null,
+          rruSrc: rru ? rru.src : null,
+          rruLoaded: rru ? (rru.complete && rru.naturalWidth > 0) : false,
+          rruDims: rru ? { width: rru.naturalWidth, height: rru.naturalHeight } : null,
           swachhSrc: swachh ? swachh.src : null,
           swachhLoaded: swachh ? (swachh.complete && swachh.naturalWidth > 0) : false,
           swachhDims: swachh ? { width: swachh.naturalWidth, height: swachh.naturalHeight } : null,
@@ -141,7 +145,7 @@ async function run() {
       clip: { x: 0, y: 0, width: 1440, height: 400, scale: 1 }
     });
     const buf = Buffer.from(shot.data, 'base64');
-    const artifactPath = 'C:\\Users\\PRATYUSH\\.gemini\\antigravity-ide\\brain\\3a557fb1-3b6c-402e-955f-9a791e1a8ad5\\gov_banner_live.png';
+    const artifactPath = path.join(__dirname, '..', 'gov_banner_live.png');
     fs.writeFileSync(artifactPath, buf);
     console.log('Saved screenshot to', artifactPath);
 
