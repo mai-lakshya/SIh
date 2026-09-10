@@ -19,5 +19,4 @@ COPY . .
 # Expose Streamlit port
 EXPOSE 8501
 
-# Run Dashboard
-CMD ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "frontend/dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]

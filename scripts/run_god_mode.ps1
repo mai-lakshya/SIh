@@ -1,0 +1,5 @@
+$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+Start-Process -NoNewWindow -FilePath "cmd.exe" -ArgumentList "/c", "python evaluate_model.py --n-trials 500 > training_12hr.log 2>&1"
+Write-Output "Started God Mode 12-hour training run."
+Write-Output "Logs are being written to training_12hr.log."
+Write-Output "To view the dashboard, run: mlflow ui"

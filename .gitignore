@@ -28,6 +28,7 @@ logs/
 latest_drift_report.json
 models/v*
 *.onnx
+*.joblib
 
 # Environment secrets and credentials
 .env

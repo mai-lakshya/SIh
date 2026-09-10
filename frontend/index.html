@@ -1287,9 +1287,9 @@
               <div class="form-group">
                 <label class="form-label">Terrain Type</label>
                 <select id="inp-terrain" class="form-select">
-                  <option value="" selected>Select Terrain Type (Auto-detecting...)</option>
+                  <option value="">Select Terrain Type...</option>
                   <option value="Urban">Urban</option>
-                  <option value="Rural_Agri">Rural Agriculture</option>
+                  <option value="Rural_Agri" selected>Rural Agriculture</option>
                   <option value="Forest_Eco_Sensitive">Forest / Eco Sensitive</option>
                   <option value="Hilly">Hilly / Difficult</option>
                   <option value="Tribal_Schedule_V">Tribal Schedule V</option>
@@ -2162,7 +2162,6 @@
     // --- API Base URL Helper ---
     function getApiBase() {
       if (window.location.protocol === 'file:') return 'http://127.0.0.1:8000';
-      if (window.location.port && window.location.port !== '8000') return 'http://127.0.0.1:8000';
       return '';
     }
 
@@ -3455,7 +3454,7 @@
       if (foundState) queryParams.append('state', foundState);
       if (foundDistrict) queryParams.append('district', foundDistrict);
 
-      fetch(`${getApiBase()}/gis/detect-terrain?${queryParams.toString()}`, { headers: getAuthHeaders() })
+      fetch(`/gis/detect-terrain?${queryParams.toString()}`, { headers: getAuthHeaders() })
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data && data.terrain_type) {
@@ -3968,10 +3967,11 @@
         }
       }
 
-      // Auto-detect Terrain Type via ISRO VEDAS satellite telemetry
+      // If terrain is not manually set or was previously auto-filled, auto-detect via VEDAS
+      const curTerrain = document.getElementById('inp-terrain')?.value;
       const latVal = document.getElementById('inp-latitude')?.value;
       const lonVal = document.getElementById('inp-longitude')?.value;
-      if (!window.isManualTerrainSelection || !document.getElementById('inp-terrain')?.value) {
+      if (!curTerrain || document.getElementById('inp-terrain')?.classList.contains('autofilled-field')) {
         if (typeof applyVedasTerrainDetection === 'function') {
           applyVedasTerrainDetection(latVal, lonVal, state, district);
         }
@@ -4469,35 +4469,23 @@
     }
     window.startNewAnalysisFromMap = startNewAnalysisFromMap;
 
-    async function applyVedasTerrainDetection(lat, lng, state, district, forceRefresh = false) {
+    async function applyVedasTerrainDetection(lat, lng, state, district) {
+      let vData = window.lastDetectedVedasTerrain;
       const cleanLat = (lat != null && !isNaN(Number(lat)) && String(lat).trim() !== '') ? Number(lat).toFixed(4) : null;
       const cleanLng = (lng != null && !isNaN(Number(lng)) && String(lng).trim() !== '') ? Number(lng).toFixed(4) : null;
-      const cleanState = (state || '').trim();
-      const cleanDistrict = (district || '').trim();
-
-      const queryKey = `${cleanLat || ''}_${cleanLng || ''}_${cleanState}_${cleanDistrict}`;
-      if (!queryKey.replace(/_/g, '')) return;
-
-      const badgeContainer = document.getElementById('inp-terrain-vedas-badge');
-      const badgeText = document.getElementById('inp-terrain-vedas-text');
-      if (badgeContainer && badgeText) {
-        badgeContainer.style.display = 'inline-flex';
-        badgeText.innerHTML = '<span style="color: #0284c7;">🛰️ <em>Querying ISRO VEDAS satellite telemetry...</em></span>';
-      }
 
       try {
-        let vData = window.lastDetectedVedasTerrain;
-        if (forceRefresh || !vData || vData.queryKey !== queryKey) {
+        if (!vData || (cleanLat && vData.queryLat !== cleanLat)) {
           const params = new URLSearchParams();
           if (cleanLat) params.append('latitude', cleanLat);
           if (cleanLng) params.append('longitude', cleanLng);
-          if (cleanState) params.append('state', cleanState);
-          if (cleanDistrict) params.append('district', cleanDistrict);
+          if (state) params.append('state', state);
+          if (district) params.append('district', district);
 
-          const res = await fetch(`${getApiBase()}/gis/detect-terrain?${params.toString()}`, { headers: getAuthHeaders() });
+          const res = await fetch(`/gis/detect-terrain?${params.toString()}`, { headers: getAuthHeaders() });
           if (res.ok) {
             vData = await res.json();
-            vData.queryKey = queryKey;
+            vData.queryLat = cleanLat;
             window.lastDetectedVedasTerrain = vData;
           }
         }
@@ -4506,11 +4494,8 @@
           setPredictorTerrain(vData.terrain_type);
           markFieldAutofilled('inp-terrain');
 
-          const terrainSelect = document.getElementById('inp-terrain');
-          if (terrainSelect) {
-            terrainSelect.dispatchEvent(new Event('change', { bubbles: true }));
-          }
-
+          const badgeContainer = document.getElementById('inp-terrain-vedas-badge');
+          const badgeText = document.getElementById('inp-terrain-vedas-text');
           if (badgeContainer && badgeText) {
             badgeContainer.style.display = 'inline-flex';
             const tel = vData.telemetry || {};
@@ -4523,22 +4508,9 @@
         }
       } catch (err) {
         console.warn('[VEDAS Client] Terrain auto-detection failed:', err);
-        if (badgeContainer && badgeText) {
-          badgeText.innerHTML = '<span style="color: #64748b;">Telemetry offline (default baseline active)</span>';
-        }
       }
     }
     window.applyVedasTerrainDetection = applyVedasTerrainDetection;
-
-    function resetToVedasTerrain() {
-      window.isManualTerrainSelection = false;
-      const latVal = document.getElementById('inp-latitude')?.value;
-      const lonVal = document.getElementById('inp-longitude')?.value;
-      const state = document.getElementById('inp-state')?.value;
-      const district = document.getElementById('inp-district')?.value;
-      applyVedasTerrainDetection(latVal, lonVal, state, district, true);
-    }
-    window.resetToVedasTerrain = resetToVedasTerrain;
 
     async function inspectSavedAnalysisInRiskPredictor(analysisId) {
       let a = (window.savedAnalyses || []).find(item => String(item.id) === String(analysisId));
@@ -5559,33 +5531,12 @@
         'inp-state', 'inp-district', 'inp-latitude', 'inp-longitude',
         'inp-road-type', 'inp-site-address'
       ];
-      let vedasCoordTimer = null;
-      function onCoordinatesChangeDebounced() {
-        clearTimeout(vedasCoordTimer);
-        vedasCoordTimer = setTimeout(() => {
-          const lat = document.getElementById('inp-latitude')?.value;
-          const lon = document.getElementById('inp-longitude')?.value;
-          const state = document.getElementById('inp-state')?.value;
-          const district = document.getElementById('inp-district')?.value;
-          if (lat && lon && typeof applyVedasTerrainDetection === 'function') {
-            applyVedasTerrainDetection(lat, lon, state, district);
-          }
-        }, 400);
-      }
-
       fieldIds.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.addEventListener('change', (e) => {
-          if (id === 'inp-terrain' && e.isTrusted) {
-            window.isManualTerrainSelection = true;
-            el.classList.remove('autofilled-field');
-          }
+        el.addEventListener('change', () => {
           if (id.startsWith('inp-state') || id.startsWith('inp-dist') || id.startsWith('inp-lat') || id.startsWith('inp-lon') || id === 'inp-road-type' || id === 'inp-site-address') {
             triggerLiveRemotenessEvaluation();
-            if (id.startsWith('inp-lat') || id.startsWith('inp-lon')) {
-              onCoordinatesChangeDebounced();
-            }
           }
           triggerResponsivePrediction();
         });
@@ -5593,9 +5544,6 @@
           el.addEventListener('input', () => {
             if (id.startsWith('inp-lat') || id.startsWith('inp-lon') || id === 'inp-site-address') {
               triggerLiveRemotenessEvaluation();
-              if (id.startsWith('inp-lat') || id.startsWith('inp-lon')) {
-                onCoordinatesChangeDebounced();
-              }
             }
             triggerResponsivePrediction();
           });
