@@ -34,6 +34,25 @@ import onnxruntime as ort
 from skl2onnx import to_onnx
 from skl2onnx.common.data_types import FloatTensorType
 
+_CURR_DIR = os.path.dirname(os.path.abspath(__file__))
+_BACKEND_DIR = os.path.dirname(_CURR_DIR)
+_WORKSPACE_ROOT = os.path.dirname(_BACKEND_DIR)
+for _sub in [
+    _WORKSPACE_ROOT,
+    _BACKEND_DIR,
+    os.path.join(_BACKEND_DIR, "01_intake"),
+    os.path.join(_BACKEND_DIR, "02_preprocessing"),
+    os.path.join(_BACKEND_DIR, "03_models"),
+    os.path.join(_BACKEND_DIR, "04_xai"),
+    os.path.join(_BACKEND_DIR, "05_orchestration"),
+    os.path.join(_BACKEND_DIR, "06_mlops"),
+    os.path.join(_BACKEND_DIR, "07_api"),
+    os.path.join(_WORKSPACE_ROOT, "remoteness"),
+    os.path.join(_WORKSPACE_ROOT, "data"),
+]:
+    if os.path.exists(_sub) and _sub not in sys.path:
+        sys.path.insert(0, _sub)
+
 # Local imports
 from pipeline import get_preprocessing_pipeline
 from hybrid_model import HybridRiskPredictor
@@ -48,10 +67,14 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(_WORKSPACE_ROOT)
 MODELS_DIR = BASE_DIR / "models"
 MODELS_DIR.mkdir(exist_ok=True)
-DATA_STORE_PATH = BASE_DIR / "indian_infrastructure_projects_dataset.csv"
+_csv_candidates = [
+    BASE_DIR / "indian_infrastructure_projects_dataset.csv",
+    BASE_DIR / "data" / "indian_infrastructure_projects_dataset.csv"
+]
+DATA_STORE_PATH = next((c for c in _csv_candidates if c.exists()), _csv_candidates[0])
 ACTIVE_VERSION_FILE = MODELS_DIR / "active_version.json"
 
 # NPU execution provider priority list specified by user requirements

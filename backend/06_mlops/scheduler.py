@@ -12,12 +12,32 @@ import os
 import logging
 import datetime
 import threading
+import sys
 from typing import Dict, Any, Optional, Callable
 
 import pandas as pd
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+
+_CURR_DIR = os.path.dirname(os.path.abspath(__file__))
+_BACKEND_DIR = os.path.dirname(_CURR_DIR)
+_WORKSPACE_ROOT = os.path.dirname(_BACKEND_DIR)
+for _sub in [
+    _WORKSPACE_ROOT,
+    _BACKEND_DIR,
+    os.path.join(_BACKEND_DIR, "01_intake"),
+    os.path.join(_BACKEND_DIR, "02_preprocessing"),
+    os.path.join(_BACKEND_DIR, "03_models"),
+    os.path.join(_BACKEND_DIR, "04_xai"),
+    os.path.join(_BACKEND_DIR, "05_orchestration"),
+    os.path.join(_BACKEND_DIR, "06_mlops"),
+    os.path.join(_BACKEND_DIR, "07_api"),
+    os.path.join(_WORKSPACE_ROOT, "remoteness"),
+    os.path.join(_WORKSPACE_ROOT, "data"),
+]:
+    if os.path.exists(_sub) and _sub not in sys.path:
+        sys.path.insert(0, _sub)
 
 from continuous_learning import (
     DriftDetector,

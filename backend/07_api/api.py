@@ -2215,9 +2215,12 @@ async def get_model_health():
     """
     try:
         from continuous_learning import get_current_model_health
-        from scheduler import get_scheduler_status
         health = get_current_model_health()
-        health["scheduler"] = get_scheduler_status()
+        try:
+            from scheduler import get_scheduler_status
+            health["scheduler"] = get_scheduler_status()
+        except Exception:
+            health["scheduler"] = {"status": "inactive"}
         health["validation_gate_thresholds"] = {
             "c_index_min": 0.88,
             "ece_max": 0.10,
