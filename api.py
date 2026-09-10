@@ -463,6 +463,7 @@ def load_artifacts():
         logging.error(f"Failed to load artifacts: {e}", exc_info=True)
 
 @app.get("/health")
+@app.head("/health")
 def health_check():
     return {
         "status": "healthy",
@@ -472,8 +473,11 @@ def health_check():
     }
 
 @app.get("/")
+@app.head("/")
 @app.get("/home")
+@app.head("/home")
 @app.get("/landing")
+@app.head("/landing")
 def serve_landing():
     """Task 1: Standalone Landing Page"""
     path = "dashboard/landing.html"
@@ -482,6 +486,7 @@ def serve_landing():
     return RedirectResponse(url="/docs")
 
 @app.get("/dashboard")
+@app.head("/dashboard")
 def serve_dashboard():
     """Task 3: Standalone Dashboard Workbench"""
     path = "dashboard/index.html"
