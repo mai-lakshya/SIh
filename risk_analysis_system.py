@@ -114,11 +114,19 @@ class RiskAnalysisSystem:
             delay_days = float(preds['delay_days'][0])
             
             # Statutory Monotonicity Calibration (SMC) under RFCTLARR Act 2013 & FCA 1980
-            sia_val = str(raw_data['sia_approval_status'].iloc[0]).strip().lower().replace(' ', '_').replace('-', '_') if 'sia_approval_status' in raw_data.columns else None
-            fc_val = str(raw_data['forest_clearance_status'].iloc[0]).strip().lower().replace(' ', '_').replace('-', '_') if 'forest_clearance_status' in raw_data.columns else None
-            pafs_val = float(raw_data['affected_families_count'].iloc[0]) if 'affected_families_count' in raw_data.columns else (
-                float(metadata.get('affected_families_count', 0)) if metadata else 0.0
-            )
+            sia_raw = raw_data['sia_approval_status'].iloc[0] if 'sia_approval_status' in raw_data.columns else None
+            sia_val = str(sia_raw).strip().lower().replace(' ', '_').replace('-', '_') if (sia_raw is not None and not pd.isna(sia_raw) and str(sia_raw).lower() != 'none') else None
+
+            fc_raw = raw_data['forest_clearance_status'].iloc[0] if 'forest_clearance_status' in raw_data.columns else None
+            fc_val = str(fc_raw).strip().lower().replace(' ', '_').replace('-', '_') if (fc_raw is not None and not pd.isna(fc_raw) and str(fc_raw).lower() != 'none') else None
+
+            raw_pafs = raw_data['affected_families_count'].iloc[0] if 'affected_families_count' in raw_data.columns else None
+            try:
+                pafs_val = float(raw_pafs) if (raw_pafs is not None and not pd.isna(raw_pafs)) else (
+                    float((metadata or {}).get('affected_families_count') or 0.0)
+                )
+            except (ValueError, TypeError):
+                pafs_val = 0.0
 
             # R&R Scale Calibration for massive Project-Affected Families displacement (>1000 PAFs)
             delta_pafs_crs = 0.0

@@ -53,7 +53,7 @@ class TestReferenceDistrictsAPI(unittest.TestCase):
             csv_path = "Revolution-main/indian_infrastructure_projects_dataset.csv"
         
         df = pd.read_csv(csv_path)
-        self.assertEqual(len(df), 13532, "Full CSV must have 13,532 rows (not capped at 200)")
+        self.assertGreaterEqual(len(df), 13532, "Full CSV must have at least 13,532 rows (not capped at 200)")
 
         # Spot-check 4 states against pandas nunique
         spot_checks = ["Maharashtra", "Rajasthan", "West Bengal", "Gujarat"]

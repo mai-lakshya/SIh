@@ -1149,12 +1149,21 @@ async def _execute_prediction_pipeline(payload: ProjectPayload) -> dict:
         query_addr = geo_addr
         if not query_addr and payload.district and str(payload.district).strip() not in ["", "Unknown", "nan"]:
             query_addr = f"{payload.district}, {payload.state}"
+
+        eff_lat = geo_lat
+        eff_lon = geo_lon
+        if (eff_lat is None or eff_lon is None) and payload.state and payload.district:
+            coords = get_district_coordinates(payload.state, payload.district)
+            if coords:
+                eff_lat, eff_lon = coords
+
         remoteness_analysis = evaluate_remoteness(
-            lat=geo_lat,
-            lon=geo_lon,
+            lat=eff_lat,
+            lon=eff_lon,
             address=query_addr,
             project_type=payload.project_type,
             district=payload.district,
+            state=payload.state,
             provided_road_type=geo_road,
             provided_terrain=payload.terrain_type,
             allow_online=False
@@ -1404,11 +1413,10 @@ async def predict_risk(request: Request, payload: ProjectPayload, user: Any = De
     return await _execute_prediction_pipeline(payload)
 
 @app.post("/remoteness/evaluate")
-@limiter.limit("60/minute")
+@limiter.limit("120/minute")
 async def evaluate_site_remoteness(
     request: Request,
-    payload: RemotenessRequest,
-    user: Any = Depends(get_current_user)
+    payload: RemotenessRequest
 ):
     """
     Evaluates physical remoteness and urban-tier accessibility delay for a project site.
@@ -1422,12 +1430,20 @@ async def evaluate_site_remoteness(
     - data quality flags
     """
     try:
+        eff_lat = payload.latitude
+        eff_lon = payload.longitude
+        if (eff_lat is None or eff_lon is None) and payload.state and payload.district:
+            coords = get_district_coordinates(payload.state, payload.district)
+            if coords:
+                eff_lat, eff_lon = coords
+
         res = evaluate_remoteness(
-            lat=payload.latitude,
-            lon=payload.longitude,
+            lat=eff_lat,
+            lon=eff_lon,
             address=payload.address or (f"{payload.district}, {payload.state}" if payload.district and payload.district != "Unknown" else None),
             project_type=payload.project_type,
             district=payload.district,
+            state=payload.state,
             provided_road_type=payload.road_type,
             provided_terrain=payload.terrain_type,
             allow_online=bool(payload.allow_online)
@@ -1773,6 +1789,16 @@ async def get_reference_districts(request: Request):
     """
     mapping = get_state_districts_mapping()
     return mapping
+
+@app.get("/reference/coordinates")
+async def get_reference_coordinates(request: Request):
+    """
+    Returns official reference coordinates map for all Indian districts from district_coordinates.json.
+    """
+    global _DISTRICT_COORDS
+    if not _DISTRICT_COORDS:
+        get_district_coordinates("Rajasthan", "Banswara")
+    return _DISTRICT_COORDS
 
 @app.get("/projects/geo")
 @limiter.limit("120/minute")

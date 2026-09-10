@@ -123,6 +123,7 @@ class RemotenessEvaluator:
         address: Optional[str] = None,
         project_type: Optional[str] = None,
         district: Optional[str] = None,
+        state: Optional[str] = None,
         provided_road_type: Optional[str] = None,
         provided_terrain: Optional[str] = None,
         road_type: Optional[str] = None,
@@ -134,10 +135,13 @@ class RemotenessEvaluator:
         """
         eff_road = provided_road_type or road_type
         eff_terrain = provided_terrain or terrain_type
+        eff_address = address
+        if not eff_address and district and state and str(district).strip() not in ["", "Unknown", "nan"]:
+            eff_address = f"{district}, {state}"
 
         # 1. Resolve & validate geographic coordinates
         (resolved_lat, resolved_lon), geo_flags = self.geocoder.resolve(
-            lat=lat, lon=lon, address=address, allow_online=allow_online
+            lat=lat, lon=lon, address=eff_address, allow_online=allow_online
         )
 
         # 2. Nearest settlement lookup & urban tier classification
@@ -217,6 +221,7 @@ def evaluate_remoteness(
     address: Optional[str] = None,
     project_type: Optional[str] = None,
     district: Optional[str] = None,
+    state: Optional[str] = None,
     road_type: Optional[str] = None,
     terrain_type: Optional[str] = None,
     provided_road_type: Optional[str] = None,
@@ -233,6 +238,7 @@ def evaluate_remoteness(
         address=address,
         project_type=project_type,
         district=district,
+        state=state,
         provided_road_type=provided_road_type or road_type,
         provided_terrain=provided_terrain or terrain_type,
         allow_online=allow_online

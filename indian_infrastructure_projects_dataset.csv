@@ -13532,3 +13532,4 @@ NHAI-TN-2019-1127,Highway,Tamil Nadu,Tiruppur,Forest_Eco_Sensitive,83.44,413.46,
 MNRE-MH-2023-1802,Renewable_Energy,Maharashtra,Solapur,Rural_Agri,66.35,290.24,2023,238,14.99,False,2.33,Pending,317,Not_Required,15.32,1.0,0.0,1.0,0.6748,0.4653,0.6,0.0,1.8283,3,0,High,56.31,High
 NHAI-GJ-2025-1273,Highway,Gujarat,Panchmahal,Rural_Agri,169.96,818.8,2025,288,27.05,False,3.02,Exempted,245,Stage_1_Pending,0.0,0.0,1.0,1.0,0.6982,0.5459,0.55,0.0,2.2329,1,0,High,55.72,High
 001,Highway,Mizoram,Aizawl,Urban,120.0,1000.0,2023,5500,19.78,True,1.65,Approved,311,Pending,25.0,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,High,67.0,High
+NHAI-TEST-001,Highway,Rajasthan,Banswara,Plain,150.0,320.0,2023,450,12.5,False,1.5,Pending,120,Stage_1_Pending,35.0,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,High,69.0,High
