@@ -523,6 +523,203 @@
       );
     }
 
+    const SURVIVAL_CURVE_DATA = [
+      { day: 0, prob: 1.0, label: "Day 0" },
+      { day: 30, prob: 0.96, label: "1 Mo" },
+      { day: 60, prob: 0.91, label: "2 Mo" },
+      { day: 90, prob: 0.84, label: "3 Mo" },
+      { day: 120, prob: 0.76, label: "4 Mo" },
+      { day: 180, prob: 0.60, label: "6 Mo" },
+      { day: 240, prob: 0.45, label: "8 Mo" },
+      { day: 300, prob: 0.35, label: "10 Mo" },
+      { day: 365, prob: 0.26, label: "1 Yr" },
+      { day: 500, prob: 0.12, label: "16 Mo" },
+      { day: 730, prob: 0.04, label: "2 Yrs" }
+    ];
+
+    /**
+     * Interactive When Is This Project Most Likely to Stall? Survival Curve
+     */
+    function ProjectSurvivalChart({
+      data = SURVIVAL_CURVE_DATA,
+      title = "When Is This Project Most Likely to Stall?",
+      subtitle = "Likelihood this project stays on track over the next 2 years"
+    }) {
+      const [hoveredPoint, setHoveredPoint] = useState(null);
+      const width = 520;
+      const height = 300;
+      const padLeft = 46;
+      const padRight = 24;
+      const padTop = 24;
+      const padBottom = 38;
+
+      const plotW = width - padLeft - padRight;
+      const plotH = height - padTop - padBottom;
+
+      const getX = (idx) => padLeft + (idx / (data.length - 1)) * plotW;
+      const getY = (prob) => padTop + (1 - prob) * plotH;
+
+      let maxDropRate = -1;
+      let steepestIdx = 0;
+      for (let i = 0; i < data.length - 1; i++) {
+        const dt = (data[i + 1].day - data[i].day) || 1;
+        const ds = (data[i].prob - data[i + 1].prob);
+        const rate = ds / dt;
+        if (rate > maxDropRate) {
+          maxDropRate = rate;
+          steepestIdx = i;
+        }
+      }
+
+      const points = data.map((d, i) => `${getX(i)},${getY(d.prob)}`).join(' ');
+      const areaPath = `M ${getX(0)},${getY(data[0].prob)} L ${points} L ${getX(data.length - 1)},${padTop + plotH} L ${getX(0)},${padTop + plotH} Z`;
+
+      const bandXStart = getX(steepestIdx);
+      const bandXEnd = getX(steepestIdx + 1);
+
+      return (
+        <div className="bg-white rounded-lg border border-gray-200 p-5 sm:p-6 shadow-sm flex flex-col justify-between h-full min-h-[460px]">
+          <div>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                  {title}
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+                  {subtitle}
+                </p>
+              </div>
+              <span className="px-2.5 py-1 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-md">
+                Critical: Day {data[steepestIdx].day}–{data[steepestIdx + 1].day}
+              </span>
+            </div>
+            <div className="border-b border-gray-200 mt-3.5 mb-4" />
+          </div>
+
+          <div className="mb-3 px-3.5 py-2.5 bg-blue-50/70 border-l-4 border-blue-500 rounded-md text-xs text-gray-700 leading-relaxed">
+            <strong className="text-blue-700">Survival Dynamics:</strong> Project stability drops sharpest between <strong>Day {data[steepestIdx].day} and Day {data[steepestIdx + 1].day}</strong> (survival probability slips from {Math.round(data[steepestIdx].prob * 100)}% to {Math.round(data[steepestIdx + 1].prob * 100)}%).
+          </div>
+
+          <div className="w-full flex-1 flex items-center justify-center relative">
+            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto max-h-[300px]">
+              <defs>
+                <linearGradient id="survivalGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#0284c7" stopOpacity="0.25" />
+                  <stop offset="100%" stopColor="#0284c7" stopOpacity="0.02" />
+                </linearGradient>
+              </defs>
+
+              {[1.0, 0.75, 0.5, 0.25, 0.0].map((p) => {
+                const y = getY(p);
+                return (
+                  <g key={p}>
+                    <line x1={padLeft} y1={y} x2={padLeft + plotW} y2={y} stroke="#f1f5f9" strokeDasharray="3 3" />
+                    <text x={padLeft - 8} y={y + 3.5} textAnchor="end" fontSize="10" fill="#94a3b8" fontFamily="Inter, sans-serif">
+                      {Math.round(p * 100)}%
+                    </text>
+                  </g>
+                );
+              })}
+
+              <rect
+                x={bandXStart}
+                y={padTop}
+                width={bandXEnd - bandXStart}
+                height={plotH}
+                fill="rgba(239, 68, 68, 0.10)"
+                stroke="rgba(239, 68, 68, 0.25)"
+                strokeDasharray="2 2"
+              />
+              <text
+                x={(bandXStart + bandXEnd) / 2}
+                y={padTop + 14}
+                textAnchor="middle"
+                fontSize="9"
+                fontWeight="bold"
+                fill="#dc2626"
+              >
+                High Stall Danger
+              </text>
+
+              <path d={areaPath} fill="url(#survivalGradient)" />
+              <polyline
+                fill="none"
+                stroke="#0284c7"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                points={points}
+              />
+
+              {data.map((d, i) => {
+                const cx = getX(i);
+                const cy = getY(d.prob);
+                const isHovered = hoveredPoint === i;
+                const isCritical = i === steepestIdx || i === steepestIdx + 1;
+
+                return (
+                  <g key={d.day}>
+                    <text
+                      x={cx}
+                      y={padTop + plotH + 18}
+                      textAnchor="middle"
+                      fontSize="9.5"
+                      fill="#64748b"
+                      fontFamily="Inter, sans-serif"
+                    >
+                      {d.label}
+                    </text>
+
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={isHovered ? 6 : (isCritical ? 4.5 : 3.5)}
+                      fill={isCritical ? "#ef4444" : "#0284c7"}
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      className="cursor-pointer transition-all duration-200"
+                      onMouseEnter={() => setHoveredPoint(i)}
+                      onMouseLeave={() => setHoveredPoint(null)}
+                    />
+
+                    {isHovered && (
+                      <g>
+                        <rect
+                          x={cx - 44}
+                          y={cy - 30}
+                          width="88"
+                          height="22"
+                          rx="4"
+                          fill="#1e293b"
+                          opacity="0.92"
+                        />
+                        <text
+                          x={cx}
+                          y={cy - 16}
+                          textAnchor="middle"
+                          fontSize="10"
+                          fill="#ffffff"
+                          fontWeight="bold"
+                        >
+                          {d.label}: {Math.round(d.prob * 100)}%
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+
+          <div className="border-t border-gray-100 mt-3 pt-2.5">
+            <p className="text-[11px] leading-relaxed text-gray-500 font-normal">
+              <strong className="font-semibold text-gray-700">Survival Dynamics:</strong> The steepest drop shows when this project is most likely to face major delays. Shaded red region pinpoints the highest risk window.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     /**
      * Complete XAI & Survival Dashboard
      */
@@ -531,10 +728,6 @@
 
       const handleFactorClick = (factor) => {
         setSelectedFactor(factor);
-        const el = document.getElementById(`bar-factor-${encodeURIComponent(factor)}`);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
       };
 
       return (
@@ -551,7 +744,7 @@
                 XAI & Survival Analysis
               </h1>
               <p className="text-xs sm:text-sm text-gray-500 mt-1">
-                Cross-sectional risk attribution comparing point-impact delays with multidimensional spatial shapes.
+                Cross-sectional risk attribution comparing multidimensional spatial shapes with longitudinal survival dynamics.
               </p>
             </div>
 
@@ -573,72 +766,19 @@
 
           {/* Two-Column Responsive Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-            {/* Left Column: Why This Risk Score Bar Chart */}
-            <div className="bg-white rounded-lg border border-gray-200 p-5 sm:p-6 shadow-sm flex flex-col justify-between h-full min-h-[460px]">
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
-                  Why This Risk Score
-                </h3>
-                <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-                  SHAP feature attributions on statutory delay days
-                </p>
-                <div className="border-b border-gray-200 mt-3.5 mb-4" />
-              </div>
-
-              {/* Bar Chart Rows */}
-              <div className="flex-1 space-y-3.5 py-2">
-                {CURRENT_PROJECT_DATA.map((item) => {
-                  const isSelected = selectedFactor === item.factor;
-                  const isIncreasing = item.project > 0;
-                  const maxVal = Math.max(...CURRENT_PROJECT_DATA.map(d => Math.abs(d.project)));
-                  const widthPct = Math.round((Math.abs(item.project) / (maxVal || 20)) * 100);
-                  return (
-                    <div
-                      key={item.factor}
-                      id={`bar-factor-${encodeURIComponent(item.factor)}`}
-                      onClick={() => setSelectedFactor(item.factor)}
-                      className={`p-3 rounded-lg transition-all cursor-pointer border ${
-                        isSelected
-                          ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-300 shadow-sm'
-                          : 'border-gray-100 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex justify-between text-xs font-semibold mb-1.5">
-                        <span className="text-gray-900 flex items-center gap-1.5">
-                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />}
-                          {item.factor}
-                        </span>
-                        <span className={isIncreasing ? 'text-[#ef5350]' : 'text-[#26a69a]'}>
-                          {isIncreasing ? `+${item.project} pts` : `${item.project} pts`}
-                        </span>
-                      </div>
-                      <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden flex">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            isIncreasing ? 'bg-[#ef5350]' : 'bg-[#26a69a]'
-                          }`}
-                          style={{ width: `${widthPct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="border-t border-gray-100 mt-3 pt-2.5">
-                <p className="text-[11px] leading-relaxed text-gray-500 font-normal">
-                  <strong className="font-semibold text-gray-700">How to read this:</strong> Red bars represent factors driving risk upward. Green bars represent mitigating factors working in the project's favor. Both charts consume the exact same underlying raw signed dataset.
-                </p>
-              </div>
-            </div>
-
-            {/* Right Column: Corrected RiskFactorRadarChart */}
+            {/* Left Column: RiskFactorRadarChart (Risk Factor Profile) */}
             <RiskFactorRadarChart
               data={CURRENT_PROJECT_DATA}
               sourceBarData={CURRENT_PROJECT_DATA}
               title="Risk Factor Profile"
               subtitle="How this project compares to the portfolio average"
               onFactorClick={handleFactorClick}
+            />
+
+            {/* Right Column: When Is This Project Most Likely to Stall? Graph */}
+            <ProjectSurvivalChart
+              title="When Is This Project Most Likely to Stall?"
+              subtitle="Likelihood this project stays on track over the next 2 years"
             />
           </div>
         </div>

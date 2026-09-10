@@ -1596,27 +1596,7 @@
     <section id="view-xai" class="tab-view hidden">
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
         
-        <!-- Left: Why This Risk Score (Plain Language Feature Drivers) -->
-        <div class="apple-card">
-          <div class="card-header-clean">
-            <div>
-              <h3 class="card-title-clean" id="shap-card-title">Why This Risk Score</h3>
-              <p class="card-subtitle-clean" id="shap-card-subtitle">The factors pushing this project's risk up or down</p>
-            </div>
-          </div>
-          <!-- Project-Specific Dynamic Plain-English Summary -->
-          <div id="shap-dynamic-summary" style="margin-bottom: 14px; padding: 10px 14px; background: var(--color-ice); border-left: 3px solid var(--color-apple-blue); border-radius: var(--radius-tags); font-size: 13px; color: var(--color-carbon); line-height: 1.45;">
-            <!-- Auto-generated summary sentence populated by renderShapChart -->
-          </div>
-          <div style="height: 350px; position: relative;">
-            <canvas id="shapChart"></canvas>
-          </div>
-          <div style="margin-top: 16px; font-size: 12px; color: var(--color-ash); line-height: 1.5;" id="shap-caption">
-            <strong style="color: var(--color-carbon);">How to read this:</strong> Red bars are making this project riskier. Green bars are working in its favor. Longer bars matter more.
-          </div>
-        </div>
-
-        <!-- Right: Risk Factor Profile (Multi-Dimensional Radar Chart) -->
+        <!-- Left: Risk Factor Profile (Multi-Dimensional Radar Chart) -->
         <div class="apple-card" id="radar-profile-card">
           <div class="card-header-clean">
             <div>
@@ -1655,28 +1635,41 @@
           </div>
         </div>
 
-      </div>
-
-      <!-- Second Row: Survival Dynamics & Statutory Milestone Slippage -->
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px;">
-        
-        <!-- Left: When Is This Project Most Likely to Stall? -->
-        <div class="apple-card">
+        <!-- Right: When Is This Project Most Likely to Stall? -->
+        <div class="apple-card" id="survival-profile-card">
           <div class="card-header-clean">
             <div>
               <h3 class="card-title-clean">When Is This Project Most Likely to Stall?</h3>
               <p class="card-subtitle-clean">Likelihood this project stays on track over the next 2 years</p>
             </div>
           </div>
-          <div style="height: 380px; position: relative;">
+          <!-- Project-Specific Dynamic Executive Summary Pill -->
+          <div id="survival-dynamic-summary" style="margin-bottom: 14px; padding: 10px 14px; background: var(--color-ice); border-left: 3px solid var(--color-apple-blue); border-radius: var(--radius-tags); font-size: 13px; color: var(--color-carbon); line-height: 1.45;">
+            <strong style="color: var(--color-apple-blue);">Critical Milestone Window:</strong> Highest stalling probability occurs between <strong>Day 120 and Day 180</strong> (Section 19 declaration clearance).
+          </div>
+          <div style="height: 350px; position: relative;">
             <canvas id="survivalChart"></canvas>
           </div>
-          <div style="margin-top: 16px; font-size: 12px; color: var(--color-ash); line-height: 1.5;">
-            <strong style="color: var(--color-carbon);">Survival Dynamics:</strong> The steepest drop shows when this project is most likely to face major delays.
+          <!-- Legend for Survival Chart -->
+          <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 16px; margin-top: 10px; font-size: 12px; color: var(--color-ash);">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="display: inline-block; width: 14px; height: 3px; background-color: #0071e3; border-radius: 2px;"></span>
+              <span style="color: var(--color-carbon); font-weight: 600; font-size: 11px;">Likelihood of Staying on Track</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid #e5e7eb;">
+              <span style="display: inline-block; width: 12px; height: 10px; background-color: rgba(239, 68, 68, 0.15); border: 1px dashed rgba(239, 68, 68, 0.4); border-radius: 2px;"></span>
+              <span style="color: var(--color-carbon); font-size: 11px;">Highest Stall Risk Period</span>
+            </div>
+          </div>
+          <div style="margin-top: 12px; font-size: 11px; color: var(--color-ash); line-height: 1.5;" id="survival-caption">
+            <strong style="color: var(--color-carbon);">Survival Dynamics:</strong> The steepest drop shows when this project is most likely to face major delays. Shaded red region highlights the critical statutory clearance window.
           </div>
         </div>
 
-        <!-- Right: RFCTLARR Act 2013 Statutory Milestone Slippage Card -->
+      </div>
+
+      <!-- Second Row: RFCTLARR Act 2013 Statutory Milestone Slippage Decomposition -->
+      <div style="margin-top: 24px;">
         <div class="apple-card">
           <div class="card-header-clean">
             <div>
@@ -1689,7 +1682,6 @@
             <!-- Dynamically populated 5 milestones -->
           </div>
         </div>
-
       </div>
     </section>
 
@@ -5787,8 +5779,28 @@
       if (!ctx) return;
       if (radarChart) radarChart.destroy();
 
-      // Read from the exact same shared dataset used by the bar chart
-      const radarData = window.__SHARED_XAI_DATASET__ || CANONICAL_XAI_DATASET;
+      // Read from the shared dataset or resolve directly from prediction data
+      let radarData = window.__SHARED_XAI_DATASET__;
+      if (!radarData) {
+        const rawDrivers = window.currentPredictionData?.explainability?.top_risk_drivers;
+        if (rawDrivers && rawDrivers.length > 0) {
+          radarData = rawDrivers.slice(0, 6).map(d => {
+            const name = d.feature_label || d.feature || 'Unknown Factor';
+            let pts;
+            if (d.shap_impact !== undefined) {
+              pts = Math.round(parseFloat(d.shap_impact) * 100);
+            } else {
+              const score = parseFloat(d.impact_score || 0);
+              pts = Math.round((d.direction === 'decreases_delay' ? -score : score) * 100);
+            }
+            const bench = Math.round(pts * 0.35);
+            return { factor: name, project: pts, benchmark: bench };
+          });
+          window.__SHARED_XAI_DATASET__ = radarData;
+        } else {
+          radarData = CANONICAL_XAI_DATASET;
+        }
+      }
 
       // Dev-mode data consistency guardrail
       if (window.__BAR_CHART_SOURCE_DATA__) {
@@ -6031,6 +6043,15 @@
           maxDropRate = rate;
           steepestIdx = i;
         }
+      }
+
+      const summaryEl = document.getElementById('survival-dynamic-summary');
+      if (summaryEl && steepestIdx !== undefined && curve[steepestIdx] && curve[steepestIdx + 1]) {
+        const dStart = curve[steepestIdx].day;
+        const dEnd = curve[steepestIdx + 1].day;
+        const pStart = Math.round((curve[steepestIdx].survival_probability || 0) * 100);
+        const pEnd = Math.round((curve[steepestIdx + 1].survival_probability || 0) * 100);
+        summaryEl.innerHTML = `<strong style="color: var(--color-apple-blue);">Critical Window:</strong> Highest stalling risk occurs between <strong>Day ${dStart} and Day ${dEnd}</strong> (stay-on-track likelihood drops from ${pStart}% to ${pEnd}%).`;
       }
 
       const highestRiskPlugin = {

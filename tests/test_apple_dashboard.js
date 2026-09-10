@@ -85,7 +85,7 @@ async function verifyDashboard() {
     'id="out-crs"',
     'id="out-delay-days"',
     'id="out-median-surv"',
-    'id="shapChart"',
+    'id="radarChart"',
     'id="survivalChart"',
     'id="calibrationChart"',
     'id="driftChart"',
