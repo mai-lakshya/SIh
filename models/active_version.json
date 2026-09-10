@@ -1,18 +1,18 @@
 {
   "version": "v2.4.0",
-  "timestamp": "2026-09-10T19:53:15.835491+00:00",
-  "training_size": 13586,
+  "timestamp": "2026-09-10T19:58:44.562645+00:00",
+  "training_size": 13587,
   "feature_count": 27,
   "npu_provider": "CPUExecutionProvider",
   "metrics": {
     "c_index": 0.9024,
     "ece": 0.0119,
-    "auc": 0.9404,
+    "auc": 0.9411,
     "c_index_passed": true,
     "ece_passed": true,
     "auc_passed": true,
     "promoted": true
   },
   "promoted": true,
-  "directory": "v2.4.0_20260910_195242"
+  "directory": "v2.4.0_20260910_195807"
 }
