@@ -160,6 +160,9 @@ class RemotenessEvaluator:
         final_terrain_type, is_forest_tribal = self.terrain_classifier.classify_terrain(
             resolved_lat, resolved_lon, district=eff_dist, provided_terrain=eff_terrain
         )
+        vedas_info = self.terrain_classifier.detect_vedas_telemetry(
+            lat=resolved_lat, lon=resolved_lon, state=state, district=eff_dist
+        )
 
         # 5. Component breakdown calculations
         base_tier_delay = self.compute_base_tier_delay(primary_settlement["tier"])
@@ -199,6 +202,7 @@ class RemotenessEvaluator:
             ],
             "road_connectivity": road_conn,
             "terrain_type": final_terrain_type,
+            "vedas_telemetry": vedas_info,
             "remoteness_delay_days": total_delay_days,
             "remoteness_score_normalized": normalized_score,
             "component_breakdown": {

@@ -46,10 +46,25 @@ HILLY_DISTRICTS: Set[str] = {
 }
 
 
+from .vedas_client import VedasTerrainDetector, VALID_TERRAIN_ENUMS, TERRAIN_LABELS
+
+
 class TerrainClassifier:
     """
-    Classifies terrain and statutory forest/tribal status.
+    Classifies terrain and statutory forest/tribal status, integrating ISRO VEDAS satellite telemetry.
     """
+
+    def detect_vedas_telemetry(
+        self,
+        lat: Optional[float],
+        lon: Optional[float],
+        state: Optional[str] = None,
+        district: Optional[str] = None
+    ) -> dict:
+        """
+        Queries ISRO VEDAS satellite telemetry engine for elevation, slope, and LULC classification.
+        """
+        return VedasTerrainDetector.detect_terrain(lat=lat, lon=lon, state=state, district=district)
 
     def classify_terrain(
         self,
@@ -68,7 +83,7 @@ class TerrainClassifier:
         # 1. Explicitly supplied terrain from project record
         if provided_terrain:
             clean = str(provided_terrain).strip().lower()
-            if "forest" in clean or "tribal" in clean:
+            if "forest" in clean or "tribal" in clean or "schedulev" in clean:
                 return "forest_tribal", True
             elif "hill" in clean or "mountain" in clean:
                 return "hilly", False
@@ -77,7 +92,23 @@ class TerrainClassifier:
             elif "plain" in clean or "rural_agri" in clean or "urban" in clean:
                 return "plain", False
 
-        # 2. District-based statutory Schedule V / Forest check
+        # 2. Query VEDAS satellite telemetry engine
+        try:
+            v_res = VedasTerrainDetector.detect_terrain(lat=lat, lon=lon, district=district)
+            v_type = v_res.get("terrain_type")
+            is_ft = bool(v_res.get("telemetry", {}).get("is_forest_tribal", False))
+            if v_type in ["Forest_Eco_Sensitive", "Tribal_Schedule_V"]:
+                return "forest_tribal", True
+            elif v_type == "Hilly":
+                return "hilly", False
+            elif v_type == "Urban":
+                return "plain", False
+            elif v_type == "Rural_Agri":
+                return "plain", False
+        except Exception:
+            pass
+
+        # 3. District-based statutory Schedule V / Forest check
         if district:
             d_norm = district.strip().lower()
             if d_norm in SCHEDULE_V_TRIBAL_DISTRICTS:
@@ -87,7 +118,7 @@ class TerrainClassifier:
             if d_norm in COASTAL_DISTRICTS:
                 return "coastal", False
 
-        # 3. Coordinate bounds geographic proxy
+        # 4. Coordinate bounds geographic proxy
         # Himalayan / Northern Hill region
         if lat >= 30.0:
             return "hilly", False
@@ -96,3 +127,4 @@ class TerrainClassifier:
             return "hilly", False
 
         return "plain", False
+

@@ -382,6 +382,12 @@ class RemotenessRequest(BaseModel):
     terrain_type: Optional[str] = Field(default=None, description="Terrain classification (plain, hilly, coastal, forest_tribal)")
     allow_online: Optional[bool] = Field(default=False, description="Enable live OSM Overpass/Nominatim queries")
 
+class VedasTerrainRequest(BaseModel):
+    latitude: Optional[float] = Field(default=None, description="Site latitude in decimal degrees")
+    longitude: Optional[float] = Field(default=None, description="Site longitude in decimal degrees")
+    state: Optional[str] = Field(default=None, description="State or UT name")
+    district: Optional[str] = Field(default=None, description="District name")
+
 class AIAdvisoryRequest(BaseModel):
     query: str
     context: Optional[str] = None
@@ -1470,6 +1476,55 @@ async def evaluate_site_remoteness(
     except Exception as e:
         logging.error("Remoteness evaluation error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Remoteness evaluation failed: {e}")
+
+@app.api_route("/gis/detect-terrain", methods=["GET", "POST"])
+@limiter.limit("120/minute")
+async def detect_gis_terrain(
+    request: Request,
+    latitude: Optional[float] = Query(None),
+    longitude: Optional[float] = Query(None),
+    state: Optional[str] = Query(None),
+    district: Optional[str] = Query(None)
+):
+    """
+    Satellite terrain detection powered by ISRO VEDAS Earth Observation telemetry.
+    Returns calibrated terrain classification (Urban, Rural_Agri, Forest_Eco_Sensitive, Hilly, Tribal_Schedule_V),
+    CartoDEM elevation/slope, and LULC metadata.
+    """
+    eff_lat = latitude
+    eff_lon = longitude
+    eff_state = state
+    eff_dist = district
+
+    # Check for JSON body if POST
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                if body.get("latitude") is not None:
+                    eff_lat = float(body["latitude"])
+                if body.get("longitude") is not None:
+                    eff_lon = float(body["longitude"])
+                if body.get("state"):
+                    eff_state = str(body["state"])
+                if body.get("district"):
+                    eff_dist = str(body["district"])
+        except Exception:
+            pass
+
+    if (eff_lat is None or eff_lon is None) and eff_state and eff_dist:
+        coords = get_district_coordinates(eff_state, eff_dist)
+        if coords:
+            eff_lat, eff_lon = coords
+
+    from remoteness.vedas_client import VedasTerrainDetector
+    result = VedasTerrainDetector.detect_terrain(
+        lat=eff_lat,
+        lon=eff_lon,
+        state=eff_state,
+        district=eff_dist
+    )
+    return result
 
 @app.post("/extract-project-pdf")
 @limiter.limit("30/minute")
