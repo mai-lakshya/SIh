@@ -1,18 +1,18 @@
 {
   "version": "v2.4.0",
-  "timestamp": "2026-09-09T19:13:47.763883+00:00",
-  "training_size": 13532,
+  "timestamp": "2026-09-10T00:41:35.912523+00:00",
+  "training_size": 13533,
   "feature_count": 27,
   "npu_provider": "DmlExecutionProvider",
   "metrics": {
-    "c_index": 0.9027,
-    "ece": 0.0146,
-    "auc": 0.9426,
+    "c_index": 0.9023,
+    "ece": 0.0155,
+    "auc": 0.9399,
     "c_index_passed": true,
     "ece_passed": true,
     "auc_passed": true,
     "promoted": true
   },
   "promoted": true,
-  "directory": "v2.4.0_20260909_191309"
+  "directory": "v2.4.0_20260910_004119"
 }

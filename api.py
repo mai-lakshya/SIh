@@ -923,8 +923,8 @@ def generate_statutory_delay_explanation(
         })
 
     if fc_status in ["Pending", "Stage_1_Pending"]:
-        severity = "High" if terrain in ["Forest_Eco_Sensitive", "Hilly"] else "Medium"
-        if not primary_bottleneck or terrain == "Forest_Eco_Sensitive":
+        severity = "High" if terrain in ["Forest Eco Sensitive", "Hilly", "Forest_Eco_Sensitive"] else "Medium"
+        if not primary_bottleneck or terrain in ["Forest Eco Sensitive", "Forest_Eco_Sensitive"]:
             primary_bottleneck = "MoEF&CC Stage-1 Forest Clearance Deadlock on Parivesh"
             critical_milestone = "Forest & Environmental Clearances"
             statutory_act = "Forest (Conservation) Act 1980 & EIA 2006 Notification"
@@ -936,12 +936,24 @@ def generate_statutory_delay_explanation(
             "severity": severity
         })
 
+    if pafs >= 1000:
+        contributing_factors.append({
+            "label": "Large-Scale Resettlement (PAFs)",
+            "value": f"{pafs:,} Affected Families",
+            "impact": "+45d Second Schedule R&R",
+            "severity": "High" if pafs >= 3000 else "Medium"
+        })
+
     if protest or comp_mult > 1.8:
-        if not primary_bottleneck or protest:
-            primary_bottleneck = "Landowner Compensation Disparity & Public Resistance"
+        if not primary_bottleneck:
+            primary_bottleneck = "Landowner Compensation Disparity & Public Resistance" if protest else "Landowner Compensation Multiplier Disparity"
             critical_milestone = "Compensation & Rehabilitation Settlement"
             statutory_act = "RFCTLARR Act 2013, Section 23 & 30 (Award & 100% Solatium)"
-            legal_hazard = f"Disparity in landowner expectations ({comp_mult:.2f}x multiplier demand) and community protests prevent smooth disbursement of awards and halt Section 38 possession handover."
+            legal_hazard = (
+                f"Disparity in landowner expectations ({comp_mult:.2f}x multiplier demand) "
+                f"{'coupled with active community protests' if protest else 'and compensation determination negotiations'} "
+                f"prevent smooth disbursement of awards and halt Section 38 possession handover."
+            )
         contributing_factors.append({
             "label": "Compensation Demand",
             "value": f"{comp_mult:.2f}x Multiplier",
@@ -1035,6 +1047,11 @@ def generate_statutory_delay_explanation(
             f"Compensation expectations from **{pafs:,} affected families** stand elevated at **{comp_mult:.2f}x multiplier** (against statutory rural baseline). "
             f"{'Coupled with active grassroots protests, ' if protest else ''}"
             f"this creates substantial deadlock during Section 23 award determination and threatens voluntary handover under Section 38."
+        )
+
+    if pafs >= 2000:
+        p2_parts.append(
+            f"Additionally, the large displacement of **{pafs:,} Project-Affected Families (PAFs)** requires mandatory Rehabilitation & Resettlement schemes under the **Second Schedule of RFCTLARR Act 2013**, including Administrator for R&R appointment (Section 43) and formal rehabilitation colony site approvals."
         )
 
     if dispute_rate > 15.0:

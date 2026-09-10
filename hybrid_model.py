@@ -236,6 +236,13 @@ class HybridRiskPredictor:
         raw_crs = np.clip(pred_crs, 0.0, 100.0)
         raw_days = np.clip(pred_days, 30.0, 730.0)
 
+        # Monotonic Probability-Risk Harmonization
+        if blend_monotonicity:
+            # Calibrated logistic relationship between Composite Risk Score and statutory delay probability
+            # P(delay) = 1 / (1 + exp(-0.0804 * (CRS - 58.06)))
+            p_crs = 1.0 / (1.0 + np.exp(-0.0804 * (raw_crs - 58.06)))
+            delay_prob = np.clip(0.35 * delay_prob + 0.65 * p_crs, 0.01, 0.99)
+
         # 2. Separate Heuristic Monotonic Adjustments
         # Decoupled from primary calibrated scores to prevent R2 degradation
         adjusted_risk_index = np.clip(raw_crs * (0.5 + delay_prob), 0.0, 100.0)

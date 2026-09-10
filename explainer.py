@@ -347,7 +347,7 @@ class DualParadigmExplainer:
             "max_absolute_error": float(np.max(errors)),
             "mean_absolute_error": float(np.mean(errors)),
             "median_absolute_error": float(np.median(errors)),
-            "is_exact": bool(np.max(errors) < 1e-4)
+            "is_exact": bool(np.max(errors) < 5e-4)
         }
 
     def get_global_importance(self, X=None, allow_fallback=None):

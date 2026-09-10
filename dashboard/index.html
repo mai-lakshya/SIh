@@ -4120,6 +4120,9 @@
       if (p.forest_clearance_status === 'Pending' || p.forest_clearance_status === 'Stage_1_Pending') crs += 15.0;
       if (p.local_protest_flag) crs += 14.0;
       crs -= (p.fund_disbursement_percent * 0.25);
+      if (p.affected_families_count > 1000) {
+        crs += Math.min(6.0, Math.log10(p.affected_families_count / 1000.0) * 5.0);
+      }
       crs = Math.max(10.0, Math.min(95.0, crs));
 
       const prob = (1 / (1 + Math.exp(-0.06 * (crs - 45))) * 100).toFixed(1);
@@ -4460,8 +4463,8 @@
 
       const projName = p.project_id || document.getElementById('inp-project-id')?.value || 'Infrastructure Corridor';
       const pType = p.project_type || document.getElementById('inp-project-type')?.value || 'Corridor';
-      const state = p.state || document.getElementById('inp-state')?.value || 'Rajasthan';
-      const district = p.district || document.getElementById('inp-district')?.value || 'Banswara';
+      const state = (p.state && p.state !== 'Unknown') ? p.state : (document.getElementById('inp-state')?.value || 'Rajasthan');
+      const district = (p.district && p.district !== 'Unknown') ? p.district : (document.getElementById('inp-district')?.value || 'District');
       const terrain = p.terrain_type || document.getElementById('inp-terrain')?.value || 'Rural Agriculture';
       const land = parseFloat(p.land_area_hectares || document.getElementById('inp-land-area')?.value || 200);
       const cost = parseFloat(p.estimated_cost_inr_crore || document.getElementById('inp-cost')?.value || 1000);
@@ -4504,8 +4507,8 @@
       }
 
       if (fcStatus === 'Pending' || fcStatus === 'Stage_1_Pending') {
-        const sev = (terrain === 'Forest_Eco_Sensitive' || terrain === 'Hilly') ? 'High' : 'Medium';
-        if (!primaryBottleneck || terrain === 'Forest_Eco_Sensitive') {
+        const sev = (terrain === 'Forest_Eco_Sensitive' || terrain === 'Hilly' || terrain === 'Forest Eco Sensitive') ? 'High' : 'Medium';
+        if (!primaryBottleneck || terrain === 'Forest_Eco_Sensitive' || terrain === 'Forest Eco Sensitive') {
           primaryBottleneck = 'MoEF&CC Stage-1 Forest Clearance Deadlock on Parivesh';
           criticalMilestone = 'Forest & Environmental Clearances';
           statutoryAct = 'Forest (Conservation) Act 1980 & EIA 2006 Notification';
@@ -4519,12 +4522,21 @@
         });
       }
 
+      if (pafs >= 1000) {
+        contributingFactors.push({
+          label: 'Large-Scale Resettlement (PAFs)',
+          value: `${pafs.toLocaleString()} Affected Families`,
+          impact: '+45d Second Schedule R&R',
+          severity: pafs >= 3000 ? 'High' : 'Medium'
+        });
+      }
+
       if (protest || compMult > 1.8) {
-        if (!primaryBottleneck || protest) {
-          primaryBottleneck = 'Landowner Compensation Disparity & Public Resistance';
+        if (!primaryBottleneck) {
+          primaryBottleneck = protest ? 'Landowner Compensation Disparity & Public Resistance' : 'Landowner Compensation Multiplier Disparity';
           criticalMilestone = 'Compensation & Rehabilitation Settlement';
           statutoryAct = 'RFCTLARR Act 2013, Section 23 & 30 (Award & 100% Solatium)';
-          legalHazard = `Disparity in landowner expectations (${compMult.toFixed(2)}x multiplier demand) and community protests prevent smooth disbursement of awards and halt Section 38 possession handover.`;
+          legalHazard = `Disparity in landowner expectations (${compMult.toFixed(2)}x multiplier demand) ${protest ? 'coupled with active community protests' : 'and compensation determination negotiations'} prevent smooth disbursement of awards and halt Section 38 possession handover.`;
         }
         contributingFactors.push({
           label: 'Compensation Demand',
@@ -4609,6 +4621,10 @@
 
       if (compMult > 1.8 || protest) {
         p2Parts.push(`Compensation expectations from **${pafs.toLocaleString()} affected families** stand elevated at **${compMult.toFixed(2)}x multiplier** (against statutory rural baseline). ${protest ? 'Coupled with active grassroots protests, ' : ''}this creates substantial deadlock during Section 23 award determination and threatens voluntary handover under Section 38.`);
+      }
+
+      if (pafs >= 2000) {
+        p2Parts.push(`Additionally, the large displacement of **${pafs.toLocaleString()} Project-Affected Families (PAFs)** requires mandatory Rehabilitation & Resettlement schemes under the **Second Schedule of RFCTLARR Act 2013**, including Administrator for R&R appointment (Section 43) and formal rehabilitation colony site approvals.`);
       }
 
       if (disputeRate > 15.0) {

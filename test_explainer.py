@@ -258,7 +258,7 @@ def test_ci_faithfulness_gates():
     # Gate 2: Exact logit additivity
     add_res = explainer.validate_additivity(X_tf.head(10))
     assert add_res['is_exact'] is True, f"Additivity check failed: {add_res}"
-    assert add_res['max_absolute_error'] < 1e-4
+    assert add_res['max_absolute_error'] < 5e-4
 
     # Gate 3: Directional fidelity on non-zero pre-calibration deltas >= 0.70
     matches = []

@@ -116,8 +116,20 @@ class RiskAnalysisSystem:
             # Statutory Monotonicity Calibration (SMC) under RFCTLARR Act 2013 & FCA 1980
             sia_val = str(raw_data['sia_approval_status'].iloc[0]).strip().lower().replace(' ', '_').replace('-', '_') if 'sia_approval_status' in raw_data.columns else None
             fc_val = str(raw_data['forest_clearance_status'].iloc[0]).strip().lower().replace(' ', '_').replace('-', '_') if 'forest_clearance_status' in raw_data.columns else None
+            pafs_val = float(raw_data['affected_families_count'].iloc[0]) if 'affected_families_count' in raw_data.columns else (
+                float(metadata.get('affected_families_count', 0)) if metadata else 0.0
+            )
 
-            if sia_val is not None or fc_val is not None:
+            # R&R Scale Calibration for massive Project-Affected Families displacement (>1000 PAFs)
+            delta_pafs_crs = 0.0
+            delta_pafs_days = 0.0
+            if pafs_val > 1000.0:
+                # Log-scale adjustment reflecting RFCTLARR Act 2013 Second Schedule administrative overhead
+                scale_ratio = min(1.0, np.log10(pafs_val / 1000.0) / 0.85)
+                delta_pafs_crs = scale_ratio * 3.5
+                delta_pafs_days = scale_ratio * 15.0
+
+            if sia_val is not None or fc_val is not None or delta_pafs_crs > 0.0:
                 sia_score_map = {
                     'approved': 0.0,
                     'exempted': 0.0,
@@ -145,9 +157,12 @@ class RiskAnalysisSystem:
                 delta_fc = s_fc - 0.4
 
                 # Statutory schedule drift and risk shifts:
-                delay_days = max(15.0, delay_days + (delta_sia * 190.0) + (delta_fc * 160.0))
-                delay_prob = float(np.clip(delay_prob + (delta_sia * 0.22) + (delta_fc * 0.18), 0.05, 0.98))
-                crs = float(np.clip(crs + (delta_sia * 24.0) + (delta_fc * 20.0), 5.0, 98.0))
+                delay_days = max(15.0, delay_days + (delta_sia * 190.0) + (delta_fc * 160.0) + delta_pafs_days)
+                crs = float(np.clip(crs + (delta_sia * 24.0) + (delta_fc * 20.0) + delta_pafs_crs, 5.0, 98.0))
+
+            # Harmonize delay probability monotonically with calibrated Composite Risk Score (CRS)
+            p_from_crs = 1.0 / (1.0 + np.exp(-0.0804 * (crs - 58.06)))
+            delay_prob = float(np.clip(0.30 * delay_prob + 0.70 * p_from_crs, 0.05, 0.98))
             
             risk_tier = "High" if crs > 50.0 else ("Medium" if crs > 25.0 else "Low")
         except Exception as e:
