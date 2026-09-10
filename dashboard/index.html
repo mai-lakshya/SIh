@@ -888,6 +888,33 @@
       opacity: 1;
     }
 
+    /* Form LA-7 Digital PDF Auto-fill Visual Highlights */
+    .autofilled-field {
+      background-color: #f0f7ff !important;
+      border-color: #0071e3 !important;
+      box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.15) !important;
+      transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .autofill-indicator-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 9px;
+      font-weight: 600;
+      color: #0071e3;
+      background: #e1f0ff;
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
     /* Utility Helpers */
     .hidden { display: none !important; }
     .text-mono { font-family: var(--font-family-mono); }
@@ -1153,6 +1180,35 @@
             </select>
           </div>
 
+          <!-- Digital PDF Intake Action Bar (Form LA-7) -->
+          <div id="pdf-intake-bar" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; background: rgba(0, 113, 227, 0.05); border: 1px dashed rgba(0, 113, 227, 0.35); border-radius: var(--radius-cards); padding: 10px 14px; margin-bottom: 16px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 18px;">📄</span>
+              <div>
+                <div style="font-size: 12px; font-weight: 600; color: var(--color-apple-blue);">Digital Form LA-7 Auto-Fill</div>
+                <div style="font-size: 11px; color: var(--color-ash);">Upload filled digital PDF data sheet to populate project parameters</div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <input type="file" id="pdf-file-input" accept=".pdf,application/pdf" style="display: none;" onchange="handleProjectPdfUpload(event)" />
+              
+              <button type="button" id="btn-upload-pdf" class="btn-apple-secondary" onclick="document.getElementById('pdf-file-input').click();" style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 980px; background: #fff; border: 1px solid var(--color-border-subtle); color: var(--color-carbon); cursor: pointer; transition: all 0.2s;" title="Upload filled Form LA-7 digital PDF">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>Upload Project Data Sheet</span>
+              </button>
+
+              <a href="/download-blank-template" download="Form_LA-7_Blank_Template.pdf" id="link-download-template" style="font-size: 11px; font-weight: 500; color: var(--color-apple-blue); text-decoration: none; display: inline-flex; align-items: center; gap: 4px;" title="Download clean blank Form LA-7 template">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>Download Blank Template</span>
+              </a>
+
+              <div id="pdf-upload-loading" style="display: none; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--color-apple-blue);">
+                <div class="spinner-small" style="width: 14px; height: 14px; border: 2px solid rgba(0,113,227,0.2); border-top-color: var(--color-apple-blue); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+                <span>Reading document...</span>
+              </div>
+            </div>
+          </div>
+
           <form id="risk-input-form" onsubmit="event.preventDefault(); executePredictRisk();">
             <div class="grid-2">
               <div class="form-group">
@@ -1168,6 +1224,8 @@
                   <option value="Renewable_Energy">Renewable Energy</option>
                   <option value="Metro">Metro Rail</option>
                   <option value="Port">Port & Shipping</option>
+                  <option value="Irrigation">Irrigation</option>
+                  <option value="Other">Other</option>
                 </select>
               </div>
             </div>
@@ -1260,11 +1318,13 @@
                   <label class="form-label">Road Connectivity</label>
                   <select id="inp-road-type" class="form-select">
                     <option value="">Auto-Detect (PMGSY / OSM)</option>
+                    <option value="PMGSY Connected">PMGSY Connected</option>
                     <option value="National Highway">National Highway</option>
                     <option value="State Highway">State Highway</option>
                     <option value="District Road">District Road</option>
                     <option value="Kachcha Road">Kachcha Road</option>
-                    <option value="No Formal Road">No Formal Road</option>
+                    <option value="No Formal Road">No Formal Road / Not Connected</option>
+                    <option value="Not Connected">Not Connected</option>
                   </select>
                 </div>
               </div>
@@ -3911,6 +3971,188 @@
     }
     window.setPredictorTerrain = setPredictorTerrain;
 
+    function updateSec11LapseBadge(val) {
+      const days = parseInt(val || 0);
+      const pill = document.getElementById('lapse-badge-pill');
+      const hint = document.getElementById('inp-sec11-hint');
+      const remaining = 365 - days;
+      if (pill) {
+        if (days >= 365) {
+          pill.className = 'badge-tier badge-tier-Critical';
+          pill.textContent = 'Statutorily Lapsed (Sec 19(7))';
+        } else if (remaining < 90) {
+          pill.className = 'badge-tier badge-tier-Medium';
+          pill.textContent = `Pre-Lapse Urgent (<90d left)`;
+        } else {
+          pill.className = 'badge-tier badge-tier-Low';
+          pill.textContent = `Statutorily Compliant (${remaining}d left)`;
+        }
+      }
+      if (hint) {
+        if (days >= 365) {
+          hint.textContent = `Sec 19(7) Violation: Preliminary notification lapsed ${days - 365} days ago.`;
+        } else {
+          hint.textContent = `Sec 19(7) Clock: ${remaining} days remaining before statutory proceedings lapse.`;
+        }
+      }
+    }
+    window.updateSec11LapseBadge = updateSec11LapseBadge;
+
+    async function handleProjectPdfUpload(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+
+      const uploadBtn = document.getElementById('btn-upload-pdf');
+      const loadingEl = document.getElementById('pdf-upload-loading');
+
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        showToast("Please upload a valid PDF file (.pdf).");
+        event.target.value = '';
+        return;
+      }
+
+      // 1. Show loading state
+      if (uploadBtn) uploadBtn.style.display = 'none';
+      if (loadingEl) loadingEl.style.display = 'inline-flex';
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const res = await fetch('/extract-project-pdf', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: formData
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          const errMsg = res.status === 400 
+            ? "This doesn't look like a valid Project Data Sheet. Please check the file or download the template."
+            : (errData.detail || "Error extracting project data from document.");
+          showToast(errMsg);
+          return;
+        }
+
+        const data = await res.json();
+        const fields = data.fields || {};
+
+        // Clear previous autofill styling and badges
+        clearAutofillHighlights();
+
+        // 2. Cascade State and District first
+        if (fields['inp-state']) {
+          setPredictorStateAndDistrict(fields['inp-state'], fields['inp-district'] || '');
+          markFieldAutofilled('inp-state');
+          if (fields['inp-district']) {
+            markFieldAutofilled('inp-district');
+          }
+        } else if (fields['inp-district']) {
+          const distEl = document.getElementById('inp-district');
+          if (distEl) {
+            distEl.value = fields['inp-district'];
+            markFieldAutofilled('inp-district');
+          }
+        }
+
+        // 3. Populate remaining non-null fields
+        for (const [elemId, val] of Object.entries(fields)) {
+          if (elemId === 'inp-state' || elemId === 'inp-district') continue;
+          if (val === null || val === undefined || val === '') continue;
+
+          const el = document.getElementById(elemId);
+          if (!el) continue;
+
+          if (el.type === 'checkbox') {
+            el.checked = Boolean(val);
+          } else if (elemId === 'inp-terrain') {
+            setPredictorTerrain(val);
+          } else if (el.tagName === 'SELECT') {
+            let matched = false;
+            const targetVal = String(val).trim().toLowerCase();
+            for (let i = 0; i < el.options.length; i++) {
+              const opt = el.options[i];
+              if (opt.value.toLowerCase() === targetVal || opt.text.toLowerCase() === targetVal) {
+                el.value = opt.value;
+                matched = true;
+                break;
+              }
+            }
+            if (!matched) {
+              for (let i = 0; i < el.options.length; i++) {
+                const opt = el.options[i];
+                if (opt.value && (opt.value.toLowerCase().includes(targetVal) || targetVal.includes(opt.value.toLowerCase()))) {
+                  el.value = opt.value;
+                  matched = true;
+                  break;
+                }
+              }
+            }
+            if (!matched) {
+              const newOpt = document.createElement('option');
+              newOpt.value = val;
+              newOpt.text = val;
+              el.add(newOpt);
+              el.value = val;
+            }
+          } else {
+            el.value = val;
+          }
+
+          markFieldAutofilled(elemId);
+        }
+
+        // 4. Update reactive indicators
+        const sec11Inp = document.getElementById('inp-sec11-days');
+        if (sec11Inp) {
+          updateSec11LapseBadge(sec11Inp.value);
+        }
+
+        // 5. Show brief summary toast
+        const filled = data.filled_count || Object.values(fields).filter(v => v !== null && v !== undefined && v !== '').length;
+        const total = data.total_fields || 19;
+        showToast(`${filled} of ${total} fields filled from document — please review and complete the rest`);
+
+      } catch (err) {
+        console.error('[PDF Auto-Fill Error]:', err);
+        showToast("Error processing PDF. Please check the file or download the blank template.");
+      } finally {
+        if (uploadBtn) uploadBtn.style.display = 'inline-flex';
+        if (loadingEl) loadingEl.style.display = 'none';
+        event.target.value = '';
+      }
+    }
+
+    function markFieldAutofilled(elemId) {
+      const el = document.getElementById(elemId);
+      if (!el) return;
+      el.classList.add('autofilled-field');
+
+      const formGroup = el.closest('.form-group') || el.parentElement;
+      if (formGroup) {
+        const label = formGroup.querySelector('.form-label');
+        if (label && !label.querySelector('.autofill-indicator-tag')) {
+          const tag = document.createElement('span');
+          tag.className = 'autofill-indicator-tag';
+          tag.textContent = 'Auto-filled';
+          label.appendChild(tag);
+        }
+      }
+    }
+
+    function clearAutofillHighlights() {
+      document.querySelectorAll('.autofilled-field').forEach(el => {
+        el.classList.remove('autofilled-field');
+      });
+      document.querySelectorAll('.autofill-indicator-tag').forEach(tag => {
+        tag.remove();
+      });
+    }
+
+    window.handleProjectPdfUpload = handleProjectPdfUpload;
+    window.markFieldAutofilled = markFieldAutofilled;
+    window.clearAutofillHighlights = clearAutofillHighlights;
+
     function inspectProjectInRiskPredictor(projectId) {
       let p = (window.allProjects || []).find(item => item.project_id === projectId);
       if (!p && window.selectedProject && window.selectedProject.project_id === projectId) {
@@ -4261,27 +4503,36 @@
 
       if (districts && districts.length > 0) {
         let districtList = [...districts];
-        const hasMatch = preselectedDistrict && districtList.some(d => d.toLowerCase() === preselectedDistrict.toLowerCase());
-        if (preselectedDistrict && !hasMatch) {
-          districtList.push(preselectedDistrict);
+        const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const targetNorm = norm(preselectedDistrict);
+        
+        let matchedDistrict = preselectedDistrict;
+        if (targetNorm) {
+          const found = districtList.find(d => norm(d) === targetNorm || norm(d).includes(targetNorm) || targetNorm.includes(norm(d)));
+          if (found) {
+            matchedDistrict = found;
+          } else {
+            districtList.push(preselectedDistrict);
+          }
         }
+
         const optionsHtml = districtList.map(d => {
-          const isSel = preselectedDistrict && (d.toLowerCase() === preselectedDistrict.toLowerCase());
+          const isSel = matchedDistrict && (d.toLowerCase() === matchedDistrict.toLowerCase() || norm(d) === norm(matchedDistrict));
           return `<option value="${escapeHtml(d)}"${isSel ? ' selected' : ''}>${escapeHtml(d)}</option>`;
         }).join('');
 
         wrapper.innerHTML = `
           <select id="inp-district" class="form-select" onchange="onDistrictOrLocationChange()">
-            <option value="" disabled${!preselectedDistrict ? ' selected' : ''}>Select District (${districtList.length})...</option>
+            <option value="" disabled${!matchedDistrict ? ' selected' : ''}>Select District (${districtList.length})...</option>
             ${optionsHtml}
           </select>
         `;
         if (fallbackNote) fallbackNote.style.display = 'none';
 
-        if (preselectedDistrict) {
+        if (matchedDistrict) {
           const selectEl = document.getElementById('inp-district');
           if (selectEl) {
-            const found = Array.from(selectEl.options).find(o => o.value.toLowerCase() === preselectedDistrict.toLowerCase());
+            const found = Array.from(selectEl.options).find(o => norm(o.value) === norm(matchedDistrict));
             if (found) selectEl.value = found.value;
           }
         }

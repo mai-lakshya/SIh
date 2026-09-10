@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Security, Request, Depends, Query
+from fastapi import FastAPI, HTTPException, Security, Request, Depends, Query, File, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.security.api_key import APIKeyHeader
@@ -1454,6 +1454,51 @@ async def evaluate_site_remoteness(
     except Exception as e:
         logging.error("Remoteness evaluation error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Remoteness evaluation failed: {e}")
+
+@app.post("/extract-project-pdf")
+@limiter.limit("30/minute")
+async def extract_project_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    user: Any = Depends(get_current_user)
+):
+    """
+    TASK 1: Backend Extraction Endpoint
+    Extracts project parameters from a standardized Form LA-7 Digital PDF.
+    Validates page count, header markers, box grid characters, and checkbox selections.
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Invalid file format. Only PDF documents (.pdf) are accepted.")
+    
+    try:
+        contents = await file.read()
+        if len(contents) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        
+        from form_la7_extractor import FormLA7Extractor
+        result = await run_in_threadpool(FormLA7Extractor.extract_from_bytes, contents)
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logging.error(f"Error extracting PDF: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to extract project data from PDF: {str(e)}")
+
+@app.get("/download-blank-template")
+async def download_blank_template():
+    """
+    Provides a download of the standardized Form LA-7 blank template PDF.
+    """
+    template_path = os.path.join("templates", "Form_LA-7_Blank_Template.pdf")
+    if not os.path.exists(template_path):
+        template_path = os.path.join("dashboard", "templates", "Form_LA-7_Blank_Template.pdf")
+    if os.path.exists(template_path):
+        return FileResponse(
+            template_path,
+            media_type="application/pdf",
+            filename="Form_LA-7_Blank_Template.pdf"
+        )
+    raise HTTPException(status_code=404, detail="Blank template file not found.")
 
 # --- Phase 10: Persistent Memory Endpoints ---
 @app.post("/analyses/save")
