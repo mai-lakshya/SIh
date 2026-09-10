@@ -1,6 +1,6 @@
 {
   "version": "v2.4.0",
-  "timestamp": "2026-09-10T14:01:56.478886+00:00",
+  "timestamp": "2026-09-10T14:23:38.056624+00:00",
   "training_size": 13585,
   "feature_count": 27,
   "npu_provider": "DmlExecutionProvider",
@@ -14,5 +14,5 @@
     "promoted": true
   },
   "promoted": true,
-  "directory": "v2.4.0_20260910_140111"
+  "directory": "v2.4.0_20260910_142320"
 }

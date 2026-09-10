@@ -6,7 +6,7 @@ const path = require('path');
 const EDGE_PATH = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const USER_DATA_DIR = path.join(__dirname, '..', 'scratch_edge_pdf_' + Date.now());
 const PORT = 9598;
-const ARTIFACT_DIR = "C:\\Users\\Lakshya Valecha\\.gemini\\antigravity-ide\\brain\\13319db7-0978-4c87-9355-9ed19f3cd22c";
+const ARTIFACT_DIR = path.join(__dirname, '..');
 
 function sleep(ms) {
   return new Promise(res => setTimeout(res, ms));
