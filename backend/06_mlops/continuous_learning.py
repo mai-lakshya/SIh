@@ -933,12 +933,24 @@ def get_current_model_health() -> Dict[str, Any]:
         except Exception:
             pass
 
+    live_count = None
+    if DATA_STORE_PATH.exists():
+        try:
+            with open(DATA_STORE_PATH, "rb") as f:
+                lines = sum(1 for _ in f)
+                if lines > 1:
+                    live_count = lines - 1
+        except Exception:
+            pass
+    active_size = live_count or card.get("training_size", 13532)
+
     return {
         "version": card.get("version", "v2.4.0"),
         "current_version": card.get("version", "v2.4.0"),
         "timestamp": card.get("timestamp", datetime.datetime.now(datetime.timezone.utc).isoformat()),
         "last_retrain_date": card.get("timestamp", datetime.datetime.now(datetime.timezone.utc).isoformat()),
-        "training_size": card.get("training_size", 13532),
+        "training_size": active_size,
+        "data_store_count": active_size,
         "npu_provider": card.get("npu_provider", detect_npu_provider()[0]),
         "c_index": card.get("metrics", {}).get("c_index", 0.9060),
         "ece": card.get("metrics", {}).get("ece", 0.0722),

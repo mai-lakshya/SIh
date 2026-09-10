@@ -455,10 +455,23 @@
       font-family: var(--font-family-sans);
       letter-spacing: -0.3px;
       white-space: nowrap;
+      transition: color 0.3s ease, transform 0.3s ease;
     }
 
     .stat-pill-val.stat-highlight {
       color: var(--color-apple-blue);
+    }
+
+    @keyframes pillUpdatedPulse {
+      0% { transform: scale(1); color: var(--color-apple-blue); }
+      30% { transform: scale(1.15); color: #0071e3; text-shadow: 0 0 10px rgba(0, 113, 227, 0.4); }
+      70% { transform: scale(1.05); color: #0071e3; }
+      100% { transform: scale(1); color: var(--color-carbon); text-shadow: none; }
+    }
+
+    .pill-updated-pulse {
+      display: inline-block;
+      animation: pillUpdatedPulse 1.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .stat-pill-divider {
@@ -1108,7 +1121,7 @@
       <section class="slim-stats-strip">
         <div class="stat-pill">
           <span class="stat-pill-label">Monitored Projects</span>
-          <span class="stat-pill-val" id="hero-total-projects">13,532</span>
+          <span class="stat-pill-val" id="hero-total-projects">13,585</span>
         </div>
         <div class="stat-pill-divider"></div>
         <div class="stat-pill">
@@ -2707,6 +2720,12 @@
         if (res.ok && data.status === 'success') {
           if (feedback) feedback.textContent = `Successfully ingested ${data.ingested_count} records. Total Store: ${data.total_store_size} projects.`;
           textarea.value = '';
+          if (typeof updateMonitoredProjectsCounter === 'function') {
+            updateMonitoredProjectsCounter(data.total_store_size, true);
+          }
+          if (typeof loadGeoData === 'function') {
+            loadGeoData(true);
+          }
           loadModelHealthDashboard();
         } else {
           if (feedback) feedback.textContent = `Error: ${data.detail || JSON.stringify(data)}`;
@@ -3752,14 +3771,34 @@
     }
     window.performReverseGeocodeLookup = performReverseGeocodeLookup;
 
-    // Load Geo Data from /projects/geo
-    async function loadGeoData() {
+    // Dynamic Monitored Projects Counter & Synchronization Helper
+    function updateMonitoredProjectsCounter(count, animate = false) {
+      if (count == null || isNaN(count)) return;
+      const heroTotalEl = document.getElementById('hero-total-projects');
+      if (heroTotalEl) {
+        heroTotalEl.textContent = Number(count).toLocaleString();
+        if (animate) {
+          heroTotalEl.classList.remove('pill-updated-pulse');
+          void heroTotalEl.offsetWidth; // trigger reflow
+          heroTotalEl.classList.add('pill-updated-pulse');
+        }
+      }
+      const dataSizeEl = document.getElementById('sch-dataset-size');
+      if (dataSizeEl) {
+        dataSizeEl.textContent = `${Number(count).toLocaleString()} Projects`;
+      }
+    }
+    window.updateMonitoredProjectsCounter = updateMonitoredProjectsCounter;
+
+    // Load Geo Data from /projects/geo (limit=0 returns all projects without row capping)
+    async function loadGeoData(forceRefresh = false) {
       const overlay = document.getElementById('map-status-overlay');
       if (overlay) overlay.style.display = 'flex';
 
       try {
         const headers = getAuthHeaders();
-        const res = await fetch('/projects/geo?limit=15000', { headers });
+        const url = `/projects/geo?limit=0${forceRefresh ? '&force_refresh=true' : ''}`;
+        const res = await fetch(url, { headers });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
         allProjects = await res.json();
@@ -3779,9 +3818,9 @@
         // Load District Boundaries Asynchronously after markers render (non-blocking)
         loadDistrictBoundariesAsync();
 
-        // Update hero KPI strip (if present)
-        const heroTotalEl = document.getElementById('hero-total-projects');
-        if (heroTotalEl) heroTotalEl.textContent = allProjects.length.toLocaleString();
+        // Update hero KPI strip
+        updateMonitoredProjectsCounter(allProjects.length, forceRefresh);
+        lastKnownProjectCount = allProjects.length;
         const meanProb = (allProjects.reduce((acc, p) => acc + (p.delay_probability || 0), 0) / allProjects.length).toFixed(1);
         const heroMeanEl = document.getElementById('hero-mean-prob');
         if (heroMeanEl) heroMeanEl.textContent = `${meanProb}%`;
@@ -3835,6 +3874,57 @@
         createFallbackProjects();
       }
     }
+
+    // Background Dynamic Dataset Sync: Checks /projects/stats periodically and on window focus/visibility
+    let lastKnownProjectCount = null;
+    let lastKnownDatasetVersion = null;
+    let isSyncingStats = false;
+
+    async function syncDatasetStats(silent = true) {
+      if (isSyncingStats) return;
+      isSyncingStats = true;
+      try {
+        const res = await fetch('/projects/stats');
+        if (!res.ok) return;
+        const stats = await res.json();
+        const currentCount = stats.total_projects;
+        const currentVer = stats.version;
+
+        if (lastKnownProjectCount !== null && currentCount !== lastKnownProjectCount) {
+          console.log(`[Dataset Sync] Live update detected: count changed from ${lastKnownProjectCount} to ${currentCount}`);
+          updateMonitoredProjectsCounter(currentCount, true);
+          const heroMeanEl = document.getElementById('hero-mean-prob');
+          if (heroMeanEl && stats.mean_delay_probability != null) {
+            heroMeanEl.textContent = `${stats.mean_delay_probability}%`;
+          }
+          const heroMedianEl = document.getElementById('hero-median-days');
+          if (heroMedianEl && stats.median_survival_days != null) {
+            heroMedianEl.textContent = `${stats.median_survival_days} Days`;
+          }
+          // Refresh GIS map markers in background
+          loadGeoData(true);
+          if (typeof showToast === 'function') {
+            showToast(`Monitored Projects updated: ${currentCount.toLocaleString()} active infrastructure corridors.`);
+          }
+        } else if (lastKnownProjectCount === null) {
+          updateMonitoredProjectsCounter(currentCount, false);
+        }
+
+        lastKnownProjectCount = currentCount;
+        lastKnownDatasetVersion = currentVer;
+      } catch (err) {
+        console.warn('[Dataset Sync] Stats sync warning:', err);
+      } finally {
+        isSyncingStats = false;
+      }
+    }
+    window.syncDatasetStats = syncDatasetStats;
+
+    setInterval(syncDatasetStats, 8000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') syncDatasetStats();
+    });
+    window.addEventListener('focus', () => syncDatasetStats());
 
     function createFallbackProjects() {
       allProjects = [
@@ -7217,6 +7307,11 @@
         window.savedAnalyses = savedAnalyses;
         renderSavedAnalysesMarkers(savedAnalyses);
         renderSavedAnalysesList(savedAnalyses);
+
+        // Instantly trigger dataset sync to increment Monitored Projects counter with animation
+        if (typeof syncDatasetStats === 'function') {
+          syncDatasetStats(false);
+        }
       } catch (err) {
         console.error('Failed to save analysis:', err);
         showToast(`Failed to save analysis: ${err.message}`);

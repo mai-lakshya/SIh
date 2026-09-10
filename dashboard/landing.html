@@ -90,7 +90,7 @@
 </div>
 <!-- STATS ROW -->
 <section class="w-full px-6" style="background-color: rgb(244, 248, 251); padding-top: 64px; padding-bottom: 64px;">
-<div class="max-w-[980px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-8 text-center"><div class="flex flex-col items-center justify-center"><span class="text-[12px] font-normal tracking-wider uppercase" style="color: #707070;">MONITORED PROJECTS</span><span class="mt-2 text-[48px] font-bold tracking-tight text-[#1d1d1f] leading-none">13,532</span></div><div class="flex flex-col items-center justify-center"><span class="text-[12px] font-normal tracking-wider uppercase" style="color: #707070;">MEAN DELAY PROBABILITY</span><span class="mt-2 text-[48px] font-bold tracking-tight text-[#1d1d1f] leading-none">56.6%</span></div><div class="flex flex-col items-center justify-center"><span class="text-[12px] font-normal tracking-wider uppercase" style="color: #707070;">MEDIAN SURVIVAL</span><span class="mt-2 text-[48px] font-bold tracking-tight text-[#1d1d1f] leading-none">124 Days</span></div><div class="flex flex-col items-center justify-center"><span class="text-[12px] font-normal tracking-wider uppercase" style="color: #707070;">UNO C-INDEX</span><span class="mt-2 text-[48px] font-bold tracking-tight text-[#0071e3] leading-none">0.906</span></div></div>
+<div class="max-w-[980px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-8 text-center"><div class="flex flex-col items-center justify-center"><span class="text-[12px] font-normal tracking-wider uppercase" style="color: #707070;">MONITORED PROJECTS</span><span class="mt-2 text-[48px] font-bold tracking-tight text-[#1d1d1f] leading-none" id="landing-monitored-projects">13,585</span></div><div class="flex flex-col items-center justify-center"><span class="text-[12px] font-normal tracking-wider uppercase" style="color: #707070;">MEAN DELAY PROBABILITY</span><span class="mt-2 text-[48px] font-bold tracking-tight text-[#1d1d1f] leading-none" id="landing-mean-prob">56.9%</span></div><div class="flex flex-col items-center justify-center"><span class="text-[12px] font-normal tracking-wider uppercase" style="color: #707070;">MEDIAN SURVIVAL</span><span class="mt-2 text-[48px] font-bold tracking-tight text-[#1d1d1f] leading-none" id="landing-median-days">120 Days</span></div><div class="flex flex-col items-center justify-center"><span class="text-[12px] font-normal tracking-wider uppercase" style="color: #707070;">UNO C-INDEX</span><span class="mt-2 text-[48px] font-bold tracking-tight text-[#0071e3] leading-none" id="landing-c-index">0.906</span></div></div>
 </section>
 <!-- PLATFORM CAPABILITIES FEATURE SECTION -->
 <section class="w-full bg-[#f5f5f7] px-6" style="padding-top: 64px; padding-bottom: 64px;">
@@ -371,11 +371,37 @@
 </div>
 <!-- FOOTER -->
 <footer class="w-full bg-[#f5f5f7] py-12 px-6 text-center">
-<p class="text-[12px] font-normal tracking-normal" style="color: #707070;">
+  <p class="text-[12px] font-normal tracking-normal" style="color: #707070;">
     Ministry of Rural Development · Built for Smart India Hackathon 2026
   </p>
 </footer>
 
-
-
+<script>
+  (function() {
+    async function syncLandingStats() {
+      try {
+        const res = await fetch('/projects/stats');
+        if (!res.ok) return;
+        const data = await res.json();
+        const pEl = document.getElementById('landing-monitored-projects');
+        if (pEl && data.total_projects) {
+          pEl.textContent = Number(data.total_projects).toLocaleString();
+        }
+        const mEl = document.getElementById('landing-mean-prob');
+        if (mEl && data.mean_delay_probability != null) {
+          mEl.textContent = `${data.mean_delay_probability}%`;
+        }
+        const sEl = document.getElementById('landing-median-days');
+        if (sEl && data.median_survival_days != null) {
+          sEl.textContent = `${data.median_survival_days} Days`;
+        }
+      } catch (e) {}
+    }
+    syncLandingStats();
+    setInterval(syncLandingStats, 8000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') syncLandingStats();
+    });
+  })();
+</script>
 </body></html>
