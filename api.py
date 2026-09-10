@@ -47,6 +47,7 @@ from risk_analysis_system import RiskAnalysisSystem
 from monitor import ModelMonitor
 from recommendation_engine import calculate_roi_for_recommendation
 from ai_advisor import AIAdvisor, PromptSecurityValidator, DomainGroundingValidator, IndianContextNormalizer
+from remoteness.remoteness_score import evaluate_remoteness
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -364,6 +365,22 @@ class ProjectPayload(BaseModel):
     project_age_years: Optional[int] = 1
     schedule_tasks: Optional[List[Dict[str, Any]]] = None
     target_completion_days: Optional[float] = None
+    latitude: Optional[float] = Field(default=None, description="Project site latitude in decimal degrees")
+    longitude: Optional[float] = Field(default=None, description="Project site longitude in decimal degrees")
+    road_type: Optional[str] = Field(default=None, description="Road connectivity type near site")
+    road_connectivity_type: Optional[str] = Field(default=None, description="Alias for road_type")
+    address: Optional[str] = Field(default=None, description="Address or village name for geocoding")
+
+class RemotenessRequest(BaseModel):
+    latitude: Optional[float] = Field(default=None, description="Site latitude")
+    longitude: Optional[float] = Field(default=None, description="Site longitude")
+    address: Optional[str] = Field(default=None, description="Address, village, or town name to geocode")
+    project_type: Optional[str] = Field(default=None, description="Infrastructure sector (e.g. Highway, Railway)")
+    district: Optional[str] = Field(default=None, description="District name")
+    state: Optional[str] = Field(default=None, description="State or UT name")
+    road_type: Optional[str] = Field(default=None, description="Road classification")
+    terrain_type: Optional[str] = Field(default=None, description="Terrain classification (plain, hilly, coastal, forest_tribal)")
+    allow_online: Optional[bool] = Field(default=False, description="Enable live OSM Overpass/Nominatim queries")
 
 class AIAdvisoryRequest(BaseModel):
     query: str
@@ -1060,9 +1077,32 @@ async def _execute_prediction_pipeline(payload: ProjectPayload) -> dict:
                 raise HTTPException(status_code=400, detail=f"Security rejection: {reason}")
 
     payload_dict = payload.model_dump(exclude_unset=True) if hasattr(payload, 'model_dump') else payload.dict(exclude_unset=True)
-    # Remove schedule-specific metadata fields so they don't pollute the ML feature dataframe
+    # Remove schedule-specific and geospatial metadata fields so they don't pollute the ML feature dataframe
     sched_tasks = payload_dict.pop('schedule_tasks', None)
     target_comp = payload_dict.pop('target_completion_days', None)
+    geo_lat = payload_dict.pop('latitude', None)
+    geo_lon = payload_dict.pop('longitude', None)
+    geo_road = payload_dict.pop('road_type', None) or payload_dict.pop('road_connectivity_type', None)
+    geo_addr = payload_dict.pop('address', None)
+
+    # Remoteness & Urban-Tier Accessibility Evaluation
+    remoteness_analysis = None
+    try:
+        query_addr = geo_addr
+        if not query_addr and payload.district and str(payload.district).strip() not in ["", "Unknown", "nan"]:
+            query_addr = f"{payload.district}, {payload.state}"
+        remoteness_analysis = evaluate_remoteness(
+            lat=geo_lat,
+            lon=geo_lon,
+            address=query_addr,
+            project_type=payload.project_type,
+            district=payload.district,
+            provided_road_type=geo_road,
+            provided_terrain=payload.terrain_type,
+            allow_online=False
+        )
+    except Exception as re_err:
+        logging.warning("Remoteness evaluation non-fatal error for %s: %s", payload.project_id, re_err)
 
     raw_payload = _prepare_df(payload_dict)
 
@@ -1291,6 +1331,7 @@ async def _execute_prediction_pipeline(payload: ProjectPayload) -> dict:
                 "global_importance": result['explanation'].get('global_importance_approx', [])[:8]
             },
             "survival_curve": survival_curve,
+            "remoteness_analysis": remoteness_analysis,
             "recommendations": prescriptive_actions,
             "prescriptive_actions": prescriptive_actions
         }
@@ -1303,6 +1344,42 @@ async def _execute_prediction_pipeline(payload: ProjectPayload) -> dict:
 @limiter.limit("60/minute")
 async def predict_risk(request: Request, payload: ProjectPayload, user: Any = Depends(get_current_user)):
     return await _execute_prediction_pipeline(payload)
+
+@app.post("/remoteness/evaluate")
+@limiter.limit("60/minute")
+async def evaluate_site_remoteness(
+    request: Request,
+    payload: RemotenessRequest,
+    user: Any = Depends(get_current_user)
+):
+    """
+    Evaluates physical remoteness and urban-tier accessibility delay for a project site.
+    Returns:
+    - nearest settlement (name, tier, distance km, Census vintage)
+    - road connectivity classification
+    - terrain type & Forest/Tribal status
+    - estimated remoteness-driven delay days
+    - normalized Remoteness Score (0-1)
+    - component breakdown for explainability
+    - data quality flags
+    """
+    try:
+        res = evaluate_remoteness(
+            lat=payload.latitude,
+            lon=payload.longitude,
+            address=payload.address or (f"{payload.district}, {payload.state}" if payload.district and payload.district != "Unknown" else None),
+            project_type=payload.project_type,
+            district=payload.district,
+            provided_road_type=payload.road_type,
+            provided_terrain=payload.terrain_type,
+            allow_online=bool(payload.allow_online)
+        )
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logging.error("Remoteness evaluation error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Remoteness evaluation failed: {e}")
 
 # --- Phase 10: Persistent Memory Endpoints ---
 @app.post("/analyses/save")
