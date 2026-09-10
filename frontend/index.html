@@ -6587,6 +6587,8 @@
           throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         }
 
+        const blob = await res.blob();
+
         // Resolve project name for clean filename
         const rawName = projectPayload.project_name || projectPayload.name || projectPayload.project_id || 'Project';
         let safeName = String(rawName).trim().replace(/[\\/*?:"<>|]/g, '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
