@@ -6329,9 +6329,143 @@
       executePredictRisk();
     }
 
-    function exportExecutiveSummary() {
-      showToast('Generating executive risk intelligence PDF summary...');
-      window.print();
+    async function exportExecutiveSummary() {
+      // 1. Resolve active project payload
+      let projectPayload = null;
+      let predictionsPayload = null;
+
+      // Check current prediction data in memory
+      if (window.currentPredictionData && window.currentPredictionData.predictions) {
+        predictionsPayload = window.currentPredictionData.predictions;
+      }
+
+      // Check last predictor form input
+      if (window.lastPredictorPayload && window.lastPredictorPayload.project_id) {
+        projectPayload = { ...window.lastPredictorPayload };
+      } else {
+        // Harvest from Risk Predictor DOM inputs
+        const idVal = document.getElementById('inp-project-id')?.value;
+        const stateVal = document.getElementById('inp-state')?.value;
+        const costVal = parseFloat(document.getElementById('inp-cost')?.value || '0');
+        const landVal = parseFloat(document.getElementById('inp-land-area')?.value || '0');
+
+        if (idVal || costVal > 0) {
+          projectPayload = {
+            project_id: idVal || 'PROJ-MANUAL',
+            project_type: document.getElementById('inp-project-type')?.value || 'Highway',
+            state: stateVal || 'Gujarat',
+            district: document.getElementById('inp-district')?.value || 'Vadodara',
+            terrain_type: document.getElementById('inp-terrain')?.value || 'Plain',
+            estimated_cost_inr_crore: costVal || 350.0,
+            land_area_hectares: landVal || 120.0,
+            sia_approval_status: document.getElementById('inp-sia-status')?.value || 'Pending',
+            forest_clearance_status: document.getElementById('inp-forest-status')?.value || 'Not_Required',
+            fund_disbursement_percent: parseFloat(document.getElementById('inp-fund-pct')?.value || '25.0'),
+            affected_families_count: parseInt(document.getElementById('inp-affected-families')?.value || '400'),
+            title_dispute_rate_percent: parseFloat(document.getElementById('inp-dispute-rate')?.value || '10.0'),
+            compensation_multiplier_demand: parseFloat(document.getElementById('inp-comp-mult')?.value || '1.5'),
+            section_11_notification_days: parseInt(document.getElementById('inp-sec11-days')?.value || '180'),
+            local_protest_flag: document.getElementById('inp-protest-flag')?.checked || false,
+            latitude: document.getElementById('inp-latitude')?.value ? parseFloat(document.getElementById('inp-latitude').value) : null,
+            longitude: document.getElementById('inp-longitude')?.value ? parseFloat(document.getElementById('inp-longitude').value) : null,
+            road_type: document.getElementById('inp-road-type')?.value || null,
+            address: document.getElementById('inp-site-address')?.value || null
+          };
+        }
+      }
+
+      // Check selected GIS map marker if predictor is not active
+      if (!projectPayload && window.selectedProject) {
+        projectPayload = { ...window.selectedProject };
+        predictionsPayload = {
+          crs: window.selectedProject.composite_risk_score,
+          delay_probability: window.selectedProject.delay_probability,
+          predicted_delay_days: window.selectedProject.predicted_delay_days,
+          calibrated_risk_tier: window.selectedProject.risk_tier,
+          median_survival_days: 140
+        };
+      }
+
+      // Fallback to active portfolio item if completely unselected
+      if (!projectPayload && window.allProjects && window.allProjects.length > 0) {
+        projectPayload = { ...window.allProjects[0] };
+      }
+
+      if (!projectPayload) {
+        projectPayload = {
+          project_id: 'NHAI-2026-NATIONAL-CORRIDOR',
+          project_type: 'Highway',
+          state: 'Gujarat',
+          district: 'Vadodara',
+          terrain_type: 'Plain',
+          estimated_cost_inr_crore: 450.0,
+          land_area_hectares: 180.0
+        };
+      }
+
+      const projId = projectPayload.project_id || 'Project';
+      showToast(`Generating detailed analytical risk memo for ${projId}...`);
+
+      const exportBtn = document.querySelector('button[onclick="exportExecutiveSummary()"]');
+      const originalText = exportBtn ? exportBtn.innerHTML : '';
+      if (exportBtn) {
+        exportBtn.innerHTML = `
+          <span style="display:inline-flex; align-items:center; gap:6px;">
+            <svg style="animation: spin 1s linear infinite; width:12px; height:12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="12"/>
+            </svg>
+            <span>Generating...</span>
+          </span>
+        `;
+        exportBtn.disabled = true;
+      }
+
+      try {
+        const headers = { ...getAuthHeaders(), 'Content-Type': 'application/json' };
+        const res = await fetch(`${getApiBase()}/api/reports/export-summary`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            project_id: projId,
+            project: projectPayload,
+            predictions: predictionsPayload
+          })
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+
+        let filename = `NEXUS_Risk_Summary_${projId.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+        const disp = res.headers.get('Content-Disposition');
+        if (disp && disp.includes('filename=')) {
+          const match = disp.match(/filename="?([^"]+)"?/);
+          if (match && match[1]) filename = match[1];
+        }
+
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        const prov = res.headers.get('X-Model-Provenance') || 'Trained Model';
+        showToast(`Executive report downloaded (${filename}). Engine: ${prov}.`);
+      } catch (err) {
+        console.error('[Export Summary] Report generation failed:', err);
+        showToast(`Report export error: ${err.message || 'Server error'}`);
+      } finally {
+        if (exportBtn) {
+          exportBtn.innerHTML = originalText;
+          exportBtn.disabled = false;
+        }
+      }
     }
 
     // =========================================================================
