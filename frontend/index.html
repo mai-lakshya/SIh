@@ -9,7 +9,7 @@
   <!-- Typography: Inter & SF Pro fallback fonts with optical weights -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   
   <!-- Leaflet 1.9.4 for High-Performance GIS Cartography -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -133,6 +133,90 @@
       -moz-osx-font-smoothing: grayscale;
       min-height: 100vh;
       overflow-x: hidden;
+    }
+
+    /* Government of India Official Identity Banner */
+    .gov-identity-banner {
+      width: 100%;
+      background: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 8px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-sizing: border-box;
+      position: relative;
+      z-index: 1001;
+    }
+    .gov-banner-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .gov-emblem {
+      height: 52px;
+      width: auto;
+      object-fit: contain;
+      filter: contrast(1.05);
+    }
+    .gov-titles {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .gov-title-hi {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1f2937;
+      letter-spacing: 0.2px;
+      line-height: 1.3;
+      font-family: 'Noto Sans Devanagari', 'Inter', -apple-system, sans-serif;
+    }
+    .gov-title-en {
+      font-size: 17px;
+      font-weight: 800;
+      color: #000000;
+      letter-spacing: 0.4px;
+      line-height: 1.25;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .gov-sub-en {
+      font-size: 11px;
+      font-weight: 600;
+      color: #4b5563;
+      letter-spacing: 0.6px;
+      line-height: 1.3;
+      text-transform: uppercase;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .gov-banner-right {
+      display: flex;
+      align-items: center;
+    }
+    .gov-swachh-logo {
+      height: 46px;
+      width: auto;
+      object-fit: contain;
+    }
+    @media (max-width: 768px) {
+      .gov-identity-banner {
+        padding: 6px 12px;
+      }
+      .gov-emblem {
+        height: 42px;
+      }
+      .gov-title-hi {
+        font-size: 11px;
+      }
+      .gov-title-en {
+        font-size: 13.5px;
+      }
+      .gov-sub-en {
+        font-size: 9.5px;
+      }
+      .gov-swachh-logo {
+        height: 36px;
+      }
     }
 
     /* Sticky Mini-Nav (Main Navigation Bar - Single Unified Row) */
@@ -921,6 +1005,21 @@
   </style>
 </head>
 <body>
+
+  <!-- Government of India Official Ministry Header Banner -->
+  <header class="gov-identity-banner">
+    <div class="gov-banner-left">
+      <img src="emblem_of_india.svg" alt="State Emblem of India" class="gov-emblem" />
+      <div class="gov-titles">
+        <span class="gov-title-hi">भूमि संसाधन विभाग</span>
+        <span class="gov-title-en">DEPARTMENT OF LAND RESOURCES</span>
+        <span class="gov-sub-en">MINISTRY OF RURAL DEVELOPMENT</span>
+      </div>
+    </div>
+    <div class="gov-banner-right">
+      <img src="swachh_bharat.svg" alt="Swachh Bharat - Clean India Mission" class="gov-swachh-logo" />
+    </div>
+  </header>
 
   <!-- Main Navigation Bar (Views & Actions) -->
   <nav class="apple-sub-nav">
