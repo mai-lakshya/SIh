@@ -3,18 +3,21 @@ NEXUS-XAI Continuous Learning Automated Scheduler
 =================================================
 Manages automated drift monitoring and retraining jobs:
 - Daily at 00:00 (Midnight): Run feature-by-feature PSI drift check. Auto-trigger retrain if PSI > 0.20.
+- Hourly: Periodic background drift check to ensure continuous distribution monitoring.
 - Weekly on Sunday at 02:00 AM: Force retrain regardless of drift on all accumulated data.
+- Initial Startup Check: Immediate non-blocking drift evaluation on server boot.
 """
 
 import os
 import logging
 import datetime
 import threading
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 import pandas as pd
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from continuous_learning import (
     DriftDetector,
@@ -32,19 +35,29 @@ if not logger.handlers:
 
 _SCHEDULER_INSTANCE: Optional[BackgroundScheduler] = None
 _SCHEDULER_LOCK = threading.Lock()
+_HOT_RELOAD_CALLBACK: Optional[Callable[[], Any]] = None
+
 _LAST_RUNS = {
     "daily_drift": None,
     "weekly_retrain": None,
-    "last_result": None
+    "last_result": None,
+    "last_retrain_result": None
 }
+
+
+def set_hot_reload_callback(callback: Callable[[], Any]) -> None:
+    """Registers callback to reload in-memory models in API serving when promoted."""
+    global _HOT_RELOAD_CALLBACK
+    _HOT_RELOAD_CALLBACK = callback
 
 
 def run_daily_drift_check() -> Dict[str, Any]:
     """
-    Scheduled job: Daily drift calculation at 00:00.
+    Scheduled job: Drift calculation.
     Computes PSI for every feature; triggers retraining if PSI > 0.20.
+    If promoted, triggers hot-reload callback for zero-downtime model updates.
     """
-    logger.info("Executing scheduled daily feature drift check...")
+    logger.info("Executing scheduled feature drift check...")
     try:
         if not DATA_STORE_PATH.exists():
             logger.warning(f"Data store {DATA_STORE_PATH} not found. Skipping drift check.")
@@ -64,17 +77,23 @@ def run_daily_drift_check() -> Dict[str, Any]:
         _LAST_RUNS["daily_drift"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         _LAST_RUNS["last_result"] = report
 
-        logger.info(f"Daily drift check complete. Max PSI: {report['max_psi']:.4f} (Threshold: 0.20)")
+        logger.info(f"Feature drift check complete. Max PSI: {report['max_psi']:.4f} (Threshold: 0.20)")
         if report.get("auto_retrain_triggered", False):
             logger.warning(f"Significant drift detected (Max PSI {report['max_psi']:.4f} > 0.20)! Auto-triggering retraining...")
             orchestrator = RetrainingOrchestrator()
             retrain_res = orchestrator.run_retrain_cycle(trigger_reason="drift_exceeded_threshold")
             _LAST_RUNS["last_retrain_result"] = retrain_res
+            if retrain_res.get("promoted", False) and _HOT_RELOAD_CALLBACK:
+                try:
+                    _HOT_RELOAD_CALLBACK()
+                    logger.info("[Scheduler] Hot-reloaded promoted model into active API serving.")
+                except Exception as cb_err:
+                    logger.warning(f"Hot-reload callback note: {cb_err}")
             return {"drift_report": report, "retrain_result": retrain_res}
 
         return {"drift_report": report}
     except Exception as e:
-        logger.error(f"Error during daily drift check: {e}", exc_info=True)
+        logger.error(f"Error during drift check: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
 
 
@@ -89,6 +108,12 @@ def run_weekly_force_retrain() -> Dict[str, Any]:
         result = orchestrator.run_retrain_cycle(trigger_reason="weekly_scheduled_sunday_2am")
         _LAST_RUNS["weekly_retrain"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         _LAST_RUNS["last_retrain_result"] = result
+        if result.get("promoted", False) and _HOT_RELOAD_CALLBACK:
+            try:
+                _HOT_RELOAD_CALLBACK()
+                logger.info("[Scheduler] Hot-reloaded promoted weekly model into active API serving.")
+            except Exception as cb_err:
+                logger.warning(f"Hot-reload callback note: {cb_err}")
         logger.info(f"Weekly retraining cycle finished. Version: {result.get('version')} Promoted: {result.get('promoted')}")
         return result
     except Exception as e:
@@ -125,9 +150,30 @@ def start_scheduler() -> BackgroundScheduler:
             replace_existing=True
         )
 
+        # Job 3: Periodic hourly drift monitor to detect live drift continuously
+        scheduler.add_job(
+            run_daily_drift_check,
+            trigger=IntervalTrigger(hours=1),
+            id="hourly_drift_check",
+            name="Hourly PSI Drift Monitor",
+            replace_existing=True
+        )
+
         scheduler.start()
         _SCHEDULER_INSTANCE = scheduler
-        logger.info("APScheduler initialized: Daily midnight drift check and Sunday 2 AM retraining scheduled.")
+        logger.info("APScheduler initialized: Daily midnight check, hourly drift monitor, and Sunday 2 AM retraining scheduled.")
+
+        # Immediate non-blocking initial drift check on startup
+        def _initial_drift_check():
+            try:
+                import time
+                time.sleep(2)
+                run_daily_drift_check()
+            except Exception as e:
+                logger.warning(f"Initial startup drift check note: {e}")
+
+        threading.Thread(target=_initial_drift_check, daemon=True).start()
+
         return _SCHEDULER_INSTANCE
 
 
@@ -164,3 +210,4 @@ if __name__ == "__main__":
             time.sleep(2)
     except KeyboardInterrupt:
         sch.shutdown()
+

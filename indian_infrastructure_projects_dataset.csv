@@ -13533,3 +13533,54 @@ MNRE-MH-2023-1802,Renewable_Energy,Maharashtra,Solapur,Rural_Agri,66.35,290.24,2
 NHAI-GJ-2025-1273,Highway,Gujarat,Panchmahal,Rural_Agri,169.96,818.8,2025,288,27.05,False,3.02,Exempted,245,Stage_1_Pending,0.0,0.0,1.0,1.0,0.6982,0.5459,0.55,0.0,2.2329,1,0,High,55.72,High
 001,Highway,Mizoram,Aizawl,Urban,120.0,1000.0,2023,5500,19.78,True,1.65,Approved,311,Pending,25.0,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,High,67.0,High
 NHAI-TEST-001,Highway,Rajasthan,Banswara,Plain,150.0,320.0,2023,450,12.5,False,1.5,Pending,120,Stage_1_Pending,35.0,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,High,69.0,High
+TEST-SYNTH-47287-0,Renewable_Energy,Gujarat,Ahmedabad,Urban,194.14,4282.06,2024,356,10.01,False,2.29,Exempted,41,Not_Required,58.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,40.3,Low
+TEST-SYNTH-47287-1,Renewable_Energy,Telangana,Warangal,Plain,155.97,1298.9,2024,204,13.59,True,1.24,Pending,223,Not_Required,20.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,55.1,Low
+TEST-SYNTH-47287-2,Highway,Gujarat,Vadodara,Desert,359.59,3286.32,2021,197,6.2,True,1.46,Pending,256,Not_Required,77.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,70.7,Low
+TEST-SYNTH-47287-3,Renewable_Energy,Tamil Nadu,Salem,Plain,155.56,345.32,2021,563,8.82,False,1.6,Pending,316,Stage 1 Approved,38.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,68.8,Low
+TEST-SYNTH-47287-4,Railway,Maharashtra,Chhatrapati Sambhajinagar,Desert,158.0,1420.36,2024,1088,13.79,True,1.96,Approved,193,Not_Required,37.2,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,78.1,Low
+TEST-SYNTH-47287-5,Railway,Maharashtra,Pune,Desert,254.1,4928.92,2021,511,0.09,True,1.81,Exempted,232,Stage 1 Approved,55.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,92.5,Low
+TEST-SYNTH-47287-6,Highway,Uttar Pradesh,Kanpur Nagar,Plain,257.91,4627.72,2021,1098,20.38,True,2.36,Exempted,410,Pending,91.2,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,66.6,Low
+TEST-SYNTH-47287-7,Railway,Tamil Nadu,Madurai,Plain,30.83,2266.1,2023,245,6.22,False,2.02,Approved,42,Pending,58.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,17.9,Low
+TEST-SYNTH-47287-8,Railway,Tamil Nadu,Salem,Hilly,234.95,2922.87,2022,863,17.88,False,1.24,Pending,162,Stage 1 Approved,23.7,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,87.0,Low
+TEST-SYNTH-47287-9,Railway,Karnataka,Dharwad,Urban,344.01,609.5,2022,639,3.56,False,1.53,Pending,142,Not_Required,25.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,72.7,Low
+TEST-SYNTH-47287-10,Highway,Maharashtra,Pune,Desert,144.68,2500.92,2022,218,17.63,False,2.42,Exempted,258,Pending,56.7,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,80.6,Low
+TEST-SYNTH-47287-11,Renewable_Energy,Gujarat,Surat,Urban,373.72,1638.26,2024,338,11.76,False,2.31,Exempted,51,Pending,92.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,10.0,Low
+TEST-SYNTH-47287-12,Highway,Tamil Nadu,Madurai,Plain,322.52,1359.45,2024,601,4.22,False,2.14,Approved,49,Not_Required,67.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,12.7,Low
+TEST-SYNTH-47287-13,Renewable_Energy,Tamil Nadu,Salem,Plain,375.67,900.45,2022,649,9.51,False,2.17,Exempted,68,Not_Required,48.4,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,10.6,Low
+TEST-SYNTH-47287-14,Renewable_Energy,Uttar Pradesh,Prayagraj,Desert,196.72,310.32,2023,1174,2.92,True,2.46,Approved,444,Pending,93.4,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,77.6,Low
+TEST-SYNTH-47287-15,Railway,Maharashtra,Pune,Hilly,132.56,4320.74,2024,1098,2.54,True,1.61,Exempted,176,Pending,75.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,55.1,Low
+TEST-SYNTH-47287-16,Railway,Karnataka,Mysuru,Desert,337.21,3687.17,2022,558,24.11,False,1.86,Pending,431,Pending,59.0,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,93.3,Low
+TEST-SYNTH-47287-17,Highway,Maharashtra,Nashik,Urban,306.03,4333.47,2022,251,2.18,False,1.72,Exempted,46,Stage 1 Approved,40.6,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,23.5,Low
+TEST-SYNTH-47287-18,Highway,Bihar,Bhagalpur,Urban,259.98,3763.26,2021,250,2.28,False,1.34,Exempted,49,Pending,86.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,32.3,Low
+TEST-SYNTH-47287-19,Renewable_Energy,Telangana,Khammam,Coastal,128.61,317.96,2023,439,10.25,False,2.12,Approved,88,Approved,47.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,21.5,Low
+TEST-SYNTH-47287-20,Highway,Telangana,Hyderabad,Plain,437.72,4456.36,2021,210,2.86,False,1.73,Exempted,41,Approved,54.4,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,25.1,Low
+TEST-SYNTH-47287-21,Highway,Maharashtra,Nagpur,Desert,110.74,1791.51,2022,342,24.91,True,1.34,Pending,261,Pending,43.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,93.8,Low
+TEST-SYNTH-47287-22,Railway,Gujarat,Vadodara,Desert,98.32,1402.47,2022,521,19.22,False,2.01,Pending,382,Approved,56.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,73.7,Low
+TEST-SYNTH-47287-23,Renewable_Energy,Karnataka,Kalaburagi,Urban,97.85,1026.67,2022,708,6.2,False,1.99,Exempted,82,Pending,49.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,40.0,Low
+TEST-SYNTH-47287-24,Railway,Bihar,Begusarai,Urban,362.57,1040.43,2024,499,13.06,False,1.71,Approved,41,Pending,88.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,37.8,Low
+TEST-SYNTH-47287-25,Highway,Telangana,Hyderabad,Hilly,314.02,4380.92,2024,71,9.86,True,1.31,Exempted,358,Approved,81.4,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,82.0,Low
+TEST-SYNTH-47287-26,Renewable_Energy,Karnataka,Mysuru,Hilly,277.18,963.17,2021,825,12.84,False,2.22,Approved,70,Pending,52.4,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,14.2,Low
+TEST-SYNTH-47287-27,Highway,Gujarat,Vadodara,Plain,72.77,2699.16,2022,122,7.97,False,1.94,Approved,81,Not_Required,63.0,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,40.5,Low
+TEST-SYNTH-47287-28,Highway,Tamil Nadu,Salem,Desert,235.49,1024.35,2024,431,16.61,False,2.36,Exempted,246,Approved,35.6,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,63.2,Low
+TEST-SYNTH-47287-29,Highway,Tamil Nadu,Tiruchirappalli,Urban,388.0,1127.01,2023,232,11.16,False,2.1,Approved,35,Not_Required,43.9,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,34.7,Low
+TEST-SYNTH-47287-30,Renewable_Energy,Tamil Nadu,Chennai,Hilly,405.07,1548.36,2022,466,1.29,False,1.27,Pending,277,Stage 1 Approved,69.7,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,65.3,Low
+TEST-SYNTH-47287-31,Renewable_Energy,Telangana,Warangal,Desert,122.48,773.69,2021,222,17.75,False,1.47,Pending,272,Approved,83.2,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,77.9,Low
+TEST-SYNTH-47287-32,Renewable_Energy,Tamil Nadu,Madurai,Plain,173.27,596.67,2021,777,0.16,True,2.08,Approved,234,Approved,82.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,56.6,Low
+TEST-SYNTH-47287-33,Railway,Gujarat,Rajkot,Coastal,253.54,1226.84,2023,935,5.0,True,2.05,Approved,198,Pending,71.0,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,91.9,Low
+TEST-SYNTH-47287-34,Highway,Telangana,Khammam,Plain,416.87,3336.21,2021,407,21.67,False,2.0,Pending,221,Not_Required,43.6,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,74.8,Low
+TEST-SYNTH-47287-35,Highway,Gujarat,Ahmedabad,Urban,309.25,3934.55,2022,885,18.84,False,2.09,Exempted,411,Stage 1 Approved,23.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,67.5,Low
+TEST-SYNTH-47287-36,Highway,Bihar,Gaya,Hilly,307.7,1801.29,2022,911,15.15,False,2.13,Exempted,246,Stage 1 Approved,65.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,84.0,Low
+TEST-SYNTH-47287-37,Highway,Maharashtra,Nashik,Coastal,425.96,3430.39,2023,1080,18.92,False,1.43,Exempted,202,Approved,94.7,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,56.5,Low
+TEST-SYNTH-47287-38,Railway,Maharashtra,Thane,Coastal,402.9,1989.03,2024,854,8.18,False,2.18,Exempted,36,Pending,43.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,12.0,Low
+TEST-SYNTH-47287-39,Railway,Telangana,Khammam,Coastal,67.23,621.7,2022,907,0.7,True,1.93,Exempted,425,Pending,23.1,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,68.1,Low
+TEST-SYNTH-47287-40,Railway,Uttar Pradesh,Lucknow,Plain,58.72,2259.86,2024,598,9.23,False,1.7,Exempted,49,Pending,70.3,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,35.5,Low
+TEST-SYNTH-47287-41,Renewable_Energy,Bihar,Gaya,Coastal,275.33,1688.99,2022,467,1.32,True,1.73,Pending,139,Stage 1 Approved,90.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,63.5,Low
+TEST-SYNTH-47287-42,Renewable_Energy,Gujarat,Vadodara,Urban,255.33,4578.23,2023,83,2.26,False,2.01,Pending,223,Stage 1 Approved,54.6,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,84.1,Low
+TEST-SYNTH-47287-43,Railway,West Bengal,Paschim Bardhaman,Plain,428.41,2761.44,2021,1072,22.15,False,1.54,Pending,398,Pending,31.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,73.5,Low
+TEST-SYNTH-47287-44,Highway,Karnataka,Dharwad,Plain,309.12,2705.79,2022,373,11.56,True,2.29,Approved,406,Approved,60.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,88.3,Low
+TEST-SYNTH-47287-45,Renewable_Energy,Karnataka,Bengaluru Urban,Hilly,115.5,4802.69,2021,132,14.56,False,1.72,Exempted,71,Not_Required,29.3,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,21.4,Low
+TEST-SYNTH-47287-46,Renewable_Energy,Karnataka,Mysuru,Hilly,218.24,1529.42,2022,703,13.98,False,1.4,Exempted,321,Stage 1 Approved,18.6,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,60.1,Low
+TEST-SYNTH-47287-47,Renewable_Energy,Maharashtra,Nashik,Coastal,106.89,1209.3,2023,1155,14.54,False,1.57,Exempted,61,Stage 1 Approved,39.7,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,22.6,Low
+TEST-SYNTH-47287-48,Highway,Karnataka,Kalaburagi,Desert,249.13,3545.47,2022,1056,8.47,True,1.42,Exempted,281,Stage 1 Approved,91.4,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,59.5,Low
+TEST-SYNTH-47287-49,Railway,Tamil Nadu,Tiruchirappalli,Hilly,310.51,2711.95,2023,361,24.05,False,2.03,Approved,306,Not_Required,23.8,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,1,Low,75.2,Low
+INGEST-1789048238745,Highway,Maharashtra,Pune,Plain,85.0,450.0,2023,320,3.5,False,1.5,Approved,45,Stage 1 Approved,35.0,0.5,0.5,0.5,0.5,0.5,0.5,0.5,,1,0,Low,25.0,Low

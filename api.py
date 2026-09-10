@@ -469,9 +469,25 @@ def load_artifacts():
         monitor = ModelMonitor()
         logging.info("[READY] RiskAnalysisSystem and Monitor successfully loaded and ready.")
 
+        def reload_active_system():
+            global system
+            try:
+                t_path = 'models_new/timeline.joblib' if os.path.exists('models_new/timeline.joblib') and os.path.getsize('models_new/timeline.joblib') > 1000 else 'timeline.joblib'
+                system = RiskAnalysisSystem(
+                    pipeline_path='pipeline.joblib',
+                    ensemble_path='ensemble.joblib',
+                    timeline_path=t_path
+                )
+                logging.info("[HOT-RELOADED] Successfully hot-reloaded promoted continuous learning model weights into API serving.")
+                return True
+            except Exception as re_err:
+                logging.warning(f"Could not hot-reload system: {re_err}")
+                return False
+
         # Initialize Continuous Learning Automated Scheduler
         try:
-            from scheduler import start_scheduler
+            from scheduler import start_scheduler, set_hot_reload_callback
+            set_hot_reload_callback(reload_active_system)
             start_scheduler()
             logging.info("[STARTED] Continuous Learning Scheduler (APScheduler) started.")
         except Exception as se:
@@ -2155,11 +2171,43 @@ class IngestRequest(BaseModel):
 async def ingest_records(request: Request, payload: IngestRequest, user: Any = Depends(get_current_user)):
     """
     Ingests new project records, validates schema, applies preprocessing,
-    and appends to training data store.
+    appends to training data store, evaluates drift, and triggers continuous retraining if drift > 0.20.
     """
     try:
-        from continuous_learning import ingest_project_records
+        from continuous_learning import ingest_project_records, DriftDetector, DATA_STORE_PATH
         res = ingest_project_records(payload.records)
+
+        # Continuous Learning: evaluate drift on incoming batch vs baseline
+        if len(payload.records) > 0 and DATA_STORE_PATH.exists():
+            def _bg_drift_eval():
+                global system
+                try:
+                    df = pd.read_csv(DATA_STORE_PATH)
+                    split_point = max(100, int(len(df) * 0.85))
+                    baseline_df = df.iloc[:split_point]
+                    recent_df = df.iloc[split_point:]
+                    detector = DriftDetector(baseline_df=baseline_df)
+                    report = detector.evaluate_drift(incoming_df=recent_df)
+                    if report.get("auto_retrain_triggered", False):
+                        logging.warning(f"[ContinuousLearning] Ingestion caused drift (Max PSI {report['max_psi']:.4f} > 0.20). Auto-triggering continuous retraining...")
+                        from continuous_learning import retrain_pipeline
+                        retrain_res = retrain_pipeline(trigger_reason="ingestion_drift_detected")
+                        if retrain_res.get("promoted", False):
+                            try:
+                                t_path = 'models_new/timeline.joblib' if os.path.exists('models_new/timeline.joblib') and os.path.getsize('models_new/timeline.joblib') > 1000 else 'timeline.joblib'
+                                system = RiskAnalysisSystem(
+                                    pipeline_path='pipeline.joblib',
+                                    ensemble_path='ensemble.joblib',
+                                    timeline_path=t_path
+                                )
+                                logging.info("[HOT-RELOADED] Ingestion continuous learning weights hot-reloaded into active serving.")
+                            except Exception as re_err:
+                                logging.warning(f"Note on ingestion hot-reload: {re_err}")
+                except Exception as de_err:
+                    logging.error(f"[ContinuousLearning] Ingestion drift evaluation error: {de_err}", exc_info=True)
+
+            threading.Thread(target=_bg_drift_eval, daemon=True).start()
+
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Ingestion error: {e}")
